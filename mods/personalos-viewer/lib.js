@@ -73,3 +73,39 @@ export function cacheName(path) {
   const ext = extOf(path);
   return fnv(2166136261) + fnv(0x9747b28c) + (ext ? "." + ext : "");
 }
+
+// ---- Remote save (spec "Remote text files"). Shared with the repo; nothing machine-specific. ----
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+// Base64 of the text's UTF-8 bytes, without Buffer, btoa or TextEncoder.
+export function utf8ToBase64(text) {
+  const b = utf8(text);
+  let out = "";
+  for (let i = 0; i < b.length; i += 3) {
+    const n = (b[i] << 16) | ((b[i + 1] ?? 0) << 8) | (b[i + 2] ?? 0);
+    out += B64[(n >> 18) & 63] + B64[(n >> 12) & 63] + (i + 1 < b.length ? B64[(n >> 6) & 63] : "=") + (i + 2 < b.length ? B64[n & 63] : "=");
+  }
+  return out;
+}
+
+// Pieces small enough for one exec argument (Linux caps one at about 128 KB).
+// Each piece is a whole number of base64 quads, so each decodes on its own.
+export function chunkBase64(text, size = 65536) {
+  const all = utf8ToBase64(text), step = Math.max(4, size - (size % 4));
+  const out = [];
+  for (let i = 0; i < all.length; i += step) out.push(all.slice(i, i + step));
+  return out.length ? out : [""];
+}
+
+// sh -c scripts. Paths and data arrive as $1, $2, never inside the script text.
+export function remoteScripts() {
+  const hash = 'if command -v sha256sum >/dev/null 2>&1; then h=$(sha256sum < "$1" | cut -d" " -f1); '
+    + 'elif command -v shasum >/dev/null 2>&1; then h=$(shasum -a 256 < "$1" | cut -d" " -f1); else exit 3; fi';
+  return {
+    probe: 'command -v base64 >/dev/null 2>&1 && { command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1; }',
+    append: 'printf "%s" "$2" | base64 -d >> "$1"',
+    check: `[ -e "$1" ] || exit 2; ${hash}; [ "$h" = "$2" ]`,
+    commit: 'mv -f "$1" "$2"',
+    cleanup: 'rm -f "$1"',
+  };
+}

@@ -4,6 +4,7 @@
 import { View, div, image } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, TextView } from "gpui-base";
 import { readTextFile, writeTextFile, notify, theme, settings, props, shared, setShared, exec, home, appHome, run, nextCommand, openOverlay, closeOverlay } from "herdr";
+import { canSaveRemote, saveRemote } from "./remote-save.js";
 import { groupOf, actionsFor, pickMode, extOf, cacheName, conflictName } from "./lib.js";
 
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
@@ -112,7 +113,13 @@ export default class Viewer extends View {
     return "saved";
   }
 
-  write(path, text, expected) { return writeTextFile(path, text, expected); }
+  // Local files use Herdr's check-and-write; remote ones use remote-save.js.
+  async write(path, text, expected) {
+    if (!this.on) return writeTextFile(path, text, expected);
+    const r = await saveRemote(path, this.on, text, expected);
+    if (r !== "saved") throw new Error(r);
+    return null;
+  }
 
   async reload(cx) {
     let text = null;
@@ -183,7 +190,8 @@ export default class Viewer extends View {
       const draft = this.draftKey() && shared(DRAFTS_KEY)?.[this.draftKey()];
       if (draft && this.text != null && draft.text !== this.text) this.banner = { kind: "draft", at: draft.at };
       this.tooLarge = this.text != null && this.text.length > LIMIT;
-      this.actions = actionsFor(this.group, { remote: Boolean(on), tooLarge: this.tooLarge, remoteWritable: true });
+      this.remoteWritable = on && this.group <= 3 ? await canSaveRemote(on) : true;
+      this.actions = actionsFor(this.group, { remote: Boolean(on), tooLarge: this.tooLarge, remoteWritable: this.remoteWritable });
       this.mode = pickMode(shared(MODES_KEY)?.[this.ext], this.actions);
       if (this.group === 4) { if (on) this.mode = "card"; else this.loadImage(cx); }
       if (this.mode === "card") this.loadSize(cx);
@@ -302,6 +310,7 @@ export default class Viewer extends View {
       .child(h_flex().h(36).flex_none().px(12).gap(8).items_center().border_b(1).border_color(t.border).text_size(12)
         .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(shown))
         .when(Boolean(this.actions?.raw && this.actions?.render), el => el.child(this.segment(t)))
+        .when(Boolean(this.on && this.group <= 3 && this.remoteWritable === false), el => el.child(div().text_size(11).text_color(t.dim).child("Read-only: this machine can't save remotely")))
         .when(Boolean(this.actions?.edit && this.mode !== "edit"), el => el.child(div().id("viewer-edit").px(10).py(3).rounded(7).border_1().border_color(t.border)
           .cursor_pointer().text_color(t.muted).hover(s => s.bg(t.hover)).on_click((_e, cx) => this.startEdit(this.text, cx)).child("✎ Edit")))
         .when(this.mode === "edit", el => el

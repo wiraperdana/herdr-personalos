@@ -71,3 +71,42 @@ test("cacheName works without TextEncoder", () => {
   try { assert.match(lib.cacheName("/a/é.png"), /^[0-9a-f]{16}\.png$/); }
   finally { globalThis.TextEncoder = saved; }
 });
+
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
+
+test("chunkBase64 round-trips UTF-8 within 64 KB chunks", () => {
+  const text = "Halo dunia, apa kabar? 🌏 é\n".repeat(5000);
+  const chunks = lib.chunkBase64(text);
+  assert.ok(chunks.length > 1);
+  for (const c of chunks) assert.ok(c.length <= 65536);
+  assert.equal(Buffer.from(chunks.join(""), "base64").toString("utf8"), text);
+  assert.equal(lib.utf8ToBase64("é🌏"), Buffer.from("é🌏").toString("base64"));
+});
+
+test("remoteScripts carry no file names, only positional arguments", () => {
+  const s = lib.remoteScripts();
+  for (const k of ["append", "check", "commit", "cleanup"]) {
+    assert.equal(typeof s[k], "string");
+    assert.ok(!s[k].includes("notes"));
+  }
+});
+
+test("remoteScripts write, refuse a changed target, and handle odd names", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rs-"));
+  const target = join(dir, "a b'$.md"), tmp = join(dir, ".a b'$.md.herdr-tmp");
+  writeFileSync(target, "old\n");
+  const s = lib.remoteScripts();
+  const sh = (script, ...args) => { try { execFileSync("sh", ["-c", script, "sh", ...args]); return 0; } catch (e) { return e.status; } };
+  const sha = t => createHash("sha256").update(t).digest("hex");
+  for (const c of lib.chunkBase64("new é\n", 3)) assert.equal(sh(s.append, tmp, c), 0);
+  assert.equal(sh(s.check, target, sha("old\n")), 0);
+  assert.equal(sh(s.commit, tmp, target), 0);
+  assert.equal(readFileSync(target, "utf8"), "new é\n");
+  assert.equal(sh(s.check, target, sha("old\n")), 1);
+  sh(s.append, tmp, lib.utf8ToBase64("x"));
+  assert.equal(sh(s.cleanup, tmp), 0);
+});
