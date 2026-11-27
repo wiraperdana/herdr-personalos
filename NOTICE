@@ -1,0 +1,7 @@
+herdr-personalos
+Copyright 2026 Wira Perdana
+
+This product includes a modified copy of the "files" mod and the "main"
+layout shipped with the Herdr app (https://herdr.dev), licensed under the
+Apache License, Version 2.0. Modifications: the Files panel is placed on the
+left of the terminals, and each file row is a native drag source for its path.
