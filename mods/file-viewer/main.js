@@ -268,7 +268,7 @@ export default class Viewer extends View {
         else {
           // Remember what the copy held, then send each save made in the Mac app back (K-261127-15).
           const h = await localHash(`${dir}/${this.name}`);
-          this.sync = { dir, file: `${dir}/${this.name}`, base: h, last: h, status: "Watching for saves", at: null };
+          this.sync = { dir, file: `${dir}/${this.name}`, base: h, last: h, kind: "watch", status: "Watching for saves", at: null };
           this.watchCopy(cx);
         }
       } catch (e) { this.fetchError = String(e); }
@@ -294,13 +294,13 @@ export default class Viewer extends View {
           await cx.sleep(1000); // Apps write in steps; let the save finish.
           const s = this.sync, h = await localHash(s.file);
           if (!h || h === s.last || this.uploading) continue;
-          this.uploading = true; s.status = `Uploading to ${this.on}…`; cx.notify();
+          this.uploading = true; s.kind = "busy"; s.status = `Uploading to ${this.on}…`; cx.notify();
           const r = await uploadFile(s.file, this.path, this.on, s.base);
           this.uploading = false;
           const time = new Date().toTimeString().slice(0, 5);
-          if (r.status === "saved") { s.base = s.last = h; s.status = `Saved to ${this.on} at ${time}`; }
-          else if (r.status === "conflict") { s.last = h; s.status = `Changed on ${this.on} meanwhile. Your version was saved as ${r.path.split("/").pop()} at ${time}`; }
-          else s.status = r.status === "unsupported" ? `${this.on} has no SHA-256 tool, so saves can't go back` : `Upload failed: ${r.error}`;
+          if (r.status === "saved") { s.base = s.last = h; s.kind = "ok"; s.status = `Saved to ${this.on} at ${time}`; }
+          else if (r.status === "conflict") { s.last = h; s.kind = "warn"; s.status = `Changed on ${this.on} meanwhile. Your version was saved as ${r.path.split("/").pop()} at ${time}`; }
+          else { s.kind = "error"; s.status = r.status === "unsupported" ? `${this.on} has no SHA-256 tool, so saves can't go back` : `Upload failed: ${r.error}`; }
           cx.notify();
         }
       } catch { this.watching = false; }
@@ -360,8 +360,16 @@ export default class Viewer extends View {
       .when(Boolean(this.actions?.openApp), el => el.child(div().id("card-open").mt(8).px(16).py(8).rounded(8).bg(t.accent).text_color(t.background).cursor_pointer()
         .on_click((_e, cx) => this.openApp(cx)).child(this.fetching ? `Copying from ${this.on}…` : "Open in default app")))
       .when(Boolean(this.on), el => el.child(div().text_size(12).text_color(t.dim).child(`On ${this.on}`)))
+      .when(Boolean(this.on && this.sync), el => {
+        // The sync state as a coloured badge, so a save, an upload or a conflict is seen at a glance.
+        const k = this.sync.kind, color = { ok: t.ansi2, busy: t.accent, warn: t.ansi3, error: t.ansi1 }[k] ?? t.muted;
+        const icon = { ok: "✓", busy: "↑", warn: "!", error: "✕" }[k] ?? "●";
+        return el.child(h_flex().mt(6).max_w(520).gap(8).px(14).py(8).rounded(8).border_1().border_color(color).bg(t.raised ?? t.background)
+          .child(div().flex_none().font_semibold().text_color(color).child(icon))
+          .child(div().text_size(13).font_semibold().text_color(k === "watch" ? t.foreground : color).child(this.sync.status)));
+      })
       .when(Boolean(this.on && this.actions?.openApp), el => el.child(div().max_w(440).text_size(11.5).text_color(t.dim).text_center()
-        .child(this.sync ? `${this.sync.status}. Saves in the Mac app go back to ${this.on} while this tab is open.` : `Opens a copy on this Mac. While this tab is open, saving it there sends it back to ${this.on}.`)))
+        .child(this.sync ? `Saves in the Mac app go back to ${this.on} while this tab is open.` : `Opens a copy on this Mac. While this tab is open, saving it there sends it back to ${this.on}.`)))
       .when(Boolean(this.fetchError), el => el.child(div().text_size(12).text_color(t.ansi1).child(this.fetchError)));
   }
 
