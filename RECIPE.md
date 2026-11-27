@@ -2,8 +2,6 @@
 
 Herdr's default window with two changes for people who work from a file tree. The Files and Changes panel sits on the left of the terminals instead of the right. You can drag any file or folder from Files into a terminal, and its absolute path is typed at the cursor.
 
-![PersonalOS](preview.png)
-
 ## What you see
 
 - Left to right: the Herdr sidebar (268px; spaces, agents, footer), then the work column.
