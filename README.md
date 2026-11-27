@@ -1,6 +1,6 @@
 # herdr-personalos
 
-A [Herdr](https://herdr.dev) layout: the Files panel on the left, and drag a file or folder from Files into a terminal to type its path.
+A [Herdr](https://herdr.dev) layout: the Files panel on the left, and drag a file or folder from Files into a terminal to type its path. Click a file to open it in its own tab.
 
 ## Install
 
@@ -8,7 +8,7 @@ Copy the files into your Herdr home, then switch to the layout:
 
 ```sh
 cp layouts/PersonalOS.json ~/.config/herdr-app/layouts/
-cp -R mods/personalos-files ~/.config/herdr-app/mods/
+cp -R mods/personalos-files mods/personalos-viewer ~/.config/herdr-app/mods/
 herdr-app check ~/.config/herdr-app/mods/personalos-files
 herdr-app do layout.switch '{"name":"PersonalOS"}'
 ```
