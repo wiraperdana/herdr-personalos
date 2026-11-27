@@ -361,10 +361,11 @@ export default class Viewer extends View {
         .on_click((_e, cx) => this.openApp(cx)).child(this.fetching ? `Copying from ${this.on}…` : "Open in default app")))
       .when(Boolean(this.on), el => el.child(div().text_size(12).text_color(t.dim).child(`On ${this.on}`)))
       .when(Boolean(this.on && this.sync), el => {
-        // The sync state as a coloured badge, so a save, an upload or a conflict is seen at a glance.
+        // The sync state in colour, so a save, an upload or a conflict is seen at a glance.
         const k = this.sync.kind, color = { ok: t.ansi2, busy: t.accent, warn: t.ansi3, error: t.ansi1 }[k] ?? t.muted;
         const icon = { ok: "✓", busy: "↑", warn: "!", error: "✕" }[k] ?? "●";
-        return el.child(h_flex().mt(6).max_w(520).gap(8).px(14).py(8).rounded(8).border_1().border_color(color).bg(t.raised ?? t.background)
+        // Plain coloured text, no box: a bordered box reads as a button.
+        return el.child(h_flex().mt(4).max_w(520).gap(6).items_center()
           .child(div().flex_none().font_semibold().text_color(color).child(icon))
           .child(div().text_size(13).font_semibold().text_color(k === "watch" ? t.foreground : color).child(this.sync.status)));
       })
