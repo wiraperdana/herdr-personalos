@@ -1,0 +1,8 @@
+{
+  "mod:personalos-viewer": {
+    "cmd-e": "personalos-viewer.edit",
+    "cmd-r": "personalos-viewer.render",
+    "cmd-s": "personalos-viewer.save",
+    "cmd-o": "personalos-viewer.open"
+  }
+}

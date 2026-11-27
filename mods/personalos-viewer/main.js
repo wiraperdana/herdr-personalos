@@ -3,7 +3,7 @@
 // Open in default app and Show in Finder.
 import { View, div, image } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, TextView } from "gpui-base";
-import { readTextFile, theme, settings, props, shared, setShared, exec, home, appHome } from "herdr";
+import { readTextFile, theme, settings, props, shared, setShared, exec, home, appHome, run, nextCommand, openOverlay, closeOverlay } from "herdr";
 import { groupOf, actionsFor, pickMode, extOf, cacheName } from "./lib.js";
 
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
@@ -24,11 +24,39 @@ function sizeLabel(n) {
 export default class Viewer extends View {
   init(_props, cx) {
     const p = props() ?? {};
+    if (p.menu) { this.menu = p; this.handle = cx.focus_handle(); this.handle.focus(); this.at = 0; return; }
     this.path = p.path ?? null; this.on = p.on ?? null;
     this.name = this.path ? this.path.split(/[\\/]/).pop() : "";
     this.ext = extOf(this.name);
     this.mode = null; this.text = null; this.code = null; this.error = this.path ? null : "No file";
     if (this.path) this.load(cx);
+    // Shortcuts and menu choices arrive as commands; Herdr delivers them to the focused copy only.
+    cx.spawn(async cx => { for (;;) { this.command(await nextCommand(), cx); cx.notify(); } });
+  }
+
+  command(c, cx) {
+    if (c === "open") this.openApp();
+    else if (c === "finder") this.showInFinder();
+    else if (c === "render") { if (this.actions?.raw && this.actions?.render) this.setMode(this.mode === "render" ? "raw" : "render", cx); }
+    else if (c === "close") this.close(cx);
+  }
+
+  close(_cx) { run("tab.close"); }
+
+  showInFinder() { if (this.actions?.finder) exec("open", ["-R", this.path]).catch(() => {}); }
+
+  menuItems() {
+    const a = this.actions ?? {};
+    return [
+      a.openApp && ["Open in default app", "open", "⌘O"],
+      a.finder && ["Show in Finder", "finder", ""],
+      this.mode === "edit" && ["Save", "save", "⌘S"],
+      ["Close", "close", ""],
+    ].filter(Boolean);
+  }
+
+  openMenu() {
+    openOverlay({ mod: "personalos-viewer", kind: "popup", width: 220, props: { menu: true, items: this.menuItems() } });
   }
 
   load(cx) {
@@ -134,14 +162,36 @@ export default class Viewer extends View {
       .when(Boolean(this.on), el => el.child(div().text_size(12).text_color(t.dim).child(`On ${this.on}`)));
   }
 
+  renderMenu(t) {
+    const items = this.menu.items ?? [];
+    const choose = i => { closeOverlay(this.menu.overlay); run(`personalos-viewer.${items[i][1]}`); };
+    return v_flex().id("viewer-menu").track_focus(this.handle).w_full().p(5).bg(t.popover).text_size(12.8)
+      .on_key_down((e, cx) => {
+        if (e.key === "down") this.at = (this.at + 1) % items.length;
+        else if (e.key === "up") this.at = (this.at + items.length - 1) % items.length;
+        else if (e.key === "enter") choose(this.at);
+        else if (e.key === "escape") closeOverlay(this.menu.overlay);
+        else return;
+        cx.notify();
+      })
+      .children(items.map(([label, , key], i) => h_flex().id(`vm-${i}`).h(31).px(8).rounded(7).items_center().justify_between().cursor_pointer()
+        .when(i === this.at, el => el.bg(t.hover))
+        .on_mouse_move((_e, cx) => { if (this.at !== i) { this.at = i; cx.notify(); } })
+        .on_click(() => choose(i))
+        .child(div().child(label)).child(div().text_color(t.dim).child(key))));
+  }
+
   render(cx) {
     const t = theme();
+    if (this.menu) return this.renderMenu(t);
     const h = home(), p = this.path ?? "";
     const shown = middle(h && p.startsWith(h) ? "~" + p.slice(h.length) : p);
     return v_flex().id("viewer").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(13)
       .child(h_flex().h(36).flex_none().px(12).gap(8).items_center().border_b(1).border_color(t.border).text_size(12)
         .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(shown))
-        .when(Boolean(this.actions?.raw && this.actions?.render), el => el.child(this.segment(t))))
+        .when(Boolean(this.actions?.raw && this.actions?.render), el => el.child(this.segment(t)))
+        .when(Boolean(this.actions), el => el.child(div().id("viewer-more").px(8).py(2).rounded(6).cursor_pointer().text_color(t.muted)
+          .hover(s => s.bg(t.hover)).on_click(() => this.openMenu()).child("⋯"))))
       .child(this.body(t));
   }
 }
