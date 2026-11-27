@@ -3,12 +3,13 @@
 // Open in default app and Show in Finder.
 import { View, div, image } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, TextView } from "gpui-base";
-import { readTextFile, theme, settings, props, shared, setShared, exec, home, appHome, run, nextCommand, openOverlay, closeOverlay } from "herdr";
-import { groupOf, actionsFor, pickMode, extOf, cacheName } from "./lib.js";
+import { readTextFile, writeTextFile, notify, theme, settings, props, shared, setShared, exec, home, appHome, run, nextCommand, openOverlay, closeOverlay } from "herdr";
+import { groupOf, actionsFor, pickMode, extOf, cacheName, conflictName } from "./lib.js";
 
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
 const LIMIT = 400000;
 const MODES_KEY = "personalos-viewer.modes";
+const DRAFTS_KEY = "personalos-viewer.drafts";
 
 function middle(s, max = 90) {
   return s.length <= max ? s : s.slice(0, max / 2 - 1) + "…" + s.slice(-(max / 2 - 1));
@@ -24,7 +25,7 @@ function sizeLabel(n) {
 export default class Viewer extends View {
   init(_props, cx) {
     const p = props() ?? {};
-    if (p.menu) { this.menu = p; this.handle = cx.focus_handle(); this.handle.focus(); this.at = 0; return; }
+    if (p.menu || p.confirm) { this.menu = p; this.handle = cx.focus_handle(); this.handle.focus(); this.at = 0; return; }
     this.path = p.path ?? null; this.on = p.on ?? null;
     this.name = this.path ? this.path.split(/[\\/]/).pop() : "";
     this.ext = extOf(this.name);
@@ -32,6 +33,7 @@ export default class Viewer extends View {
     if (this.path) this.load(cx);
     // Shortcuts and menu choices arrive as commands; Herdr delivers them to the focused copy only.
     cx.spawn(async cx => { for (;;) { this.command(await nextCommand(), cx); cx.notify(); } });
+    cx.timer.every(3000, () => this.saveDraft());
   }
 
   command(c, cx) {
@@ -39,9 +41,114 @@ export default class Viewer extends View {
     else if (c === "finder") this.showInFinder();
     else if (c === "render") { if (this.actions?.raw && this.actions?.render) this.setMode(this.mode === "render" ? "raw" : "render", cx); }
     else if (c === "close") this.close(cx);
+    else if (c === "edit") this.startEdit(this.text, cx);
+    else if (c === "save") this.save(cx);
+    else if (c === "close-save") this.save(cx).then(r => { if (r === "saved") run("tab.close"); });
+    else if (c === "reload") this.reload(cx);
+    else if (c === "save-conflict") { if (this.mode === "edit") this.saveAsConflict(cx); }
+    else if (c === "close-discard") { this.dropDraft(); run("tab.close"); }
   }
 
-  close(_cx) { run("tab.close"); }
+  close(_cx) {
+    if (!this.dirty) { run("tab.close"); return; }
+    openOverlay({ mod: "personalos-viewer", kind: "dialog", width: 380, modal: true,
+      props: { confirm: true, name: this.name, items: [["Save", "close-save", "⌘S"], ["Discard changes", "close-discard", ""], ["Cancel", "", "esc"]] } });
+  }
+
+  draftKey() { return this.path ? `${this.on ?? ""}|${this.path}` : null; }
+
+  saveDraft() {
+    if (!this.dirty || !this.editCode) return;
+    setShared(DRAFTS_KEY, { ...(shared(DRAFTS_KEY) ?? {}), [this.draftKey()]: { text: this.editCode.value(), original: this.original, at: Date.now() } });
+  }
+
+  dropDraft() {
+    const all = { ...(shared(DRAFTS_KEY) ?? {}) };
+    if (all[this.draftKey()]) { delete all[this.draftKey()]; setShared(DRAFTS_KEY, all); }
+  }
+
+  setDirty(dirty) {
+    if (this.dirty === dirty) return;
+    this.dirty = dirty;
+    run("tab.rename", { name: dirty ? `● ${this.name}` : this.name });
+  }
+
+  // Edit is a writable editor over `value`; it is never remembered as the file type's mode.
+  startEdit(value, cx) {
+    if (!this.actions?.edit || this.mode === "edit") return;
+    const t = theme();
+    this.editCode?.release();
+    this.editCode = EditorState.new({ language: LANG[this.ext] ?? (this.ext || "txt"), value: value ?? "",
+      syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.dim, function: t.ansi4, type: t.ansi3, number: t.ansi1, constant: t.ansi6 } });
+    this.editCode.on("change", (_e, cx) => { this.setDirty(this.editCode.value() !== this.original); cx.notify(); });
+    this.mode = "edit";
+    this.editCode.focus();
+    cx?.notify();
+  }
+
+  stopEdit(cx) {
+    this.editCode?.release(); this.editCode = null;
+    this.setDirty(false); this.dropDraft();
+    this.mode = pickMode(shared(MODES_KEY)?.[this.ext], this.actions);
+    cx?.notify();
+  }
+
+  // Saves only if the file still holds what was read; otherwise shows the conflict banner.
+  async save(cx) {
+    if (this.mode !== "edit" || !this.editCode) return "error";
+    const text = this.editCode.value();
+    try {
+      await this.write(this.path, text, this.original);
+    } catch {
+      let now = null;
+      try { now = await readTextFile(this.path, { on: this.on }); } catch {}
+      this.banner = { kind: now === null ? "gone" : "conflict" };
+      cx?.notify();
+      return "conflict";
+    }
+    this.text = this.original = text; this.banner = null;
+    this.buildCode(); this.setDirty(false); this.dropDraft();
+    cx?.notify();
+    return "saved";
+  }
+
+  write(path, text, expected) { return writeTextFile(path, text, expected); }
+
+  async reload(cx) {
+    let text = null;
+    try { text = await readTextFile(this.path, { on: this.on }); } catch {}
+    this.banner = null;
+    if (text === null) { this.error = "This file is no longer available"; this.stopEdit(cx); return; }
+    this.text = this.original = text; this.buildCode(); this.stopEdit(cx);
+  }
+
+  async saveAsConflict(cx) {
+    const text = this.editCode?.value() ?? "";
+    const dir = this.path.slice(0, this.path.lastIndexOf("/"));
+    let names = new Set();
+    try {
+      const r = await exec("ls", ["-A", dir], { on: this.on });
+      names = new Set(r.stdout.split("\n"));
+    } catch {}
+    const name = conflictName(this.name, n => names.has(n));
+    try {
+      await this.write(`${dir}/${name}`, text, null);
+      notify({ title: `Your edits were saved as ${name}` });
+      await this.reload(cx);
+    } catch { notify({ title: "Could not save the conflict file" }); }
+  }
+
+  restoreDraft(cx) {
+    const d = shared(DRAFTS_KEY)?.[this.draftKey()];
+    this.banner = null;
+    if (!d) return;
+    const disk = this.original;
+    this.startEdit(d.text, cx);
+    this.original = d.original;     // a later save checks the file against where the draft began
+    this.setDirty(true);
+    if (disk !== d.original) this.banner = { kind: "conflict" };
+    cx?.notify();
+  }
 
   showInFinder() { if (this.actions?.finder) exec("open", ["-R", this.path]).catch(() => {}); }
 
@@ -72,6 +179,9 @@ export default class Viewer extends View {
       this.group = byExt >= 4 ? byExt : unreadable ? 5 : groupOf(this.name, text);
       if (this.group <= 3 && (text == null || text.includes("\0"))) this.group = 5;
       this.text = this.group <= 3 ? text : null;
+      this.original = this.text;
+      const draft = this.draftKey() && shared(DRAFTS_KEY)?.[this.draftKey()];
+      if (draft && this.text != null && draft.text !== this.text) this.banner = { kind: "draft", at: draft.at };
       this.tooLarge = this.text != null && this.text.length > LIMIT;
       this.actions = actionsFor(this.group, { remote: Boolean(on), tooLarge: this.tooLarge, remoteWritable: true });
       this.mode = pickMode(shared(MODES_KEY)?.[this.ext], this.actions);
@@ -150,6 +260,7 @@ export default class Viewer extends View {
       return div().id("viewer-render").flex_1().min_h(0).overflow_y_scrollbar().px(24).py(16).child(view.selectable(true));
     }
     const font = settings();
+    if (this.mode === "edit") return Editor.new(this.editCode).font_family(font.font_family).text_size(font.font_size).flex_1().min_h(0);
     return Editor.new(this.code).font_family(font.font_family).text_size(font.font_size).flex_1().min_h(0);
   }
 
@@ -164,7 +275,7 @@ export default class Viewer extends View {
 
   renderMenu(t) {
     const items = this.menu.items ?? [];
-    const choose = i => { closeOverlay(this.menu.overlay); run(`personalos-viewer.${items[i][1]}`); };
+    const choose = i => { closeOverlay(this.menu.overlay); if (items[i][1]) run(`personalos-viewer.${items[i][1]}`); };
     return v_flex().id("viewer-menu").track_focus(this.handle).w_full().p(5).bg(t.popover).text_size(12.8)
       .on_key_down((e, cx) => {
         if (e.key === "down") this.at = (this.at + 1) % items.length;
@@ -174,6 +285,7 @@ export default class Viewer extends View {
         else return;
         cx.notify();
       })
+      .when(Boolean(this.menu.confirm), el => el.child(div().px(8).py(8).font_semibold().child(`Save changes to ${this.menu.name}?`)))
       .children(items.map(([label, , key], i) => h_flex().id(`vm-${i}`).h(31).px(8).rounded(7).items_center().justify_between().cursor_pointer()
         .when(i === this.at, el => el.bg(t.hover))
         .on_mouse_move((_e, cx) => { if (this.at !== i) { this.at = i; cx.notify(); } })
@@ -190,8 +302,31 @@ export default class Viewer extends View {
       .child(h_flex().h(36).flex_none().px(12).gap(8).items_center().border_b(1).border_color(t.border).text_size(12)
         .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(shown))
         .when(Boolean(this.actions?.raw && this.actions?.render), el => el.child(this.segment(t)))
+        .when(Boolean(this.actions?.edit && this.mode !== "edit"), el => el.child(div().id("viewer-edit").px(10).py(3).rounded(7).border_1().border_color(t.border)
+          .cursor_pointer().text_color(t.muted).hover(s => s.bg(t.hover)).on_click((_e, cx) => this.startEdit(this.text, cx)).child("✎ Edit")))
+        .when(this.mode === "edit", el => el
+          .child(div().id("viewer-save").px(10).py(3).rounded(7).cursor_pointer().bg(this.dirty ? t.accent : t.hover).text_color(this.dirty ? t.background : t.muted)
+            .on_click((_e, cx) => this.save(cx)).child("Save"))
+          .child(div().id("viewer-done").px(10).py(3).rounded(7).border_1().border_color(t.border).cursor_pointer().text_color(t.muted)
+            .on_click((_e, cx) => this.dirty ? this.close(cx) : this.stopEdit(cx)).child(this.dirty ? "Close…" : "Done")))
         .when(Boolean(this.actions), el => el.child(div().id("viewer-more").px(8).py(2).rounded(6).cursor_pointer().text_color(t.muted)
           .hover(s => s.bg(t.hover)).on_click(() => this.openMenu()).child("⋯"))))
+      .when(Boolean(this.banner), el => el.child(this.renderBanner(t)))
       .child(this.body(t));
+  }
+
+  renderBanner(t) {
+    const b = this.banner;
+    const btn = (id, label, fn) => div().id(id).px(10).py(3).rounded(7).border_1().border_color(t.border).cursor_pointer()
+      .hover(s => s.bg(t.hover)).on_click((_e, cx) => fn(cx)).child(label);
+    const msg = b.kind === "conflict" ? "This file changed on disk since you opened it."
+      : b.kind === "gone" ? "This file is no longer available."
+      : `You have unsaved changes to this file from ${new Date(b.at).toLocaleString()}.`;
+    return h_flex().flex_none().px(12).py(8).gap(8).items_center().bg(t.hover).border_b(1).border_color(t.border).text_size(12)
+      .child(div().flex_1().child(msg))
+      .when(b.kind === "conflict", el => el.child(btn("b-reload", "Reload", cx => this.reload(cx))))
+      .when(b.kind !== "draft", el => el.child(btn("b-conflict", "Save as conflict file", cx => this.saveAsConflict(cx))))
+      .when(b.kind === "draft", el => el.child(btn("b-restore", "Restore", cx => this.restoreDraft(cx)))
+        .child(btn("b-drop", "Discard", cx => { this.dropDraft(); this.banner = null; cx.notify(); })));
   }
 }
