@@ -101,6 +101,7 @@ export default class Files extends View {
   }
 
   refreshIfDue(cx) {
+    if (this.dropHover && Date.now() - (this.dropAt ?? 0) > 1500) { this.dropHover = null; cx.notify(); }
     const active = window()?.active !== false, context = this.context;
     const ev = shared(EVENT);
     if (ev && ev.seq !== this.lastEvent) {
@@ -291,11 +292,19 @@ export default class Files extends View {
       out.push(h_flex().id(`file-${path}`).h(28).flex_none().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover(s => s.bg(t.hover))
         // Holding Option turns the native drag (paths into a terminal) off, so our own move-drag can run.
         .when(!(this.altHeld || this.moving), el => el.drag_paths([`${this.root}/${path}`], { on: this.on ?? null }))
-        .when(Boolean(this.moving) && this.moveTarget === (entry.dir ? `${this.root}/${path}` : null), el => el.bg(t.hover).border_1().border_color(t.accent))
+        .when((Boolean(this.moving) || Boolean(this.dropHover)) && (this.moving ? this.moveTarget : this.dropHover) === (entry.dir ? `${this.root}/${path}` : null), el => el.bg(t.hover).border_1().border_color(t.accent))
         .when(this.moving?.src === `${this.root}/${path}`, el => el.opacity(0.5))
-        .on_mouse_down("left", (e, cx) => { if (e.modifiers.alt && !this.on) { cx.stop_propagation(); this.moving = { src: `${this.root}/${path}` }; this.moveTarget = null; cx.notify(); } })
-        .on_mouse_move((_e, cx) => { if (!this.moving) return; const target = entry.dir ? `${this.root}/${path}` : ops.parentOf(`${this.root}/${path}`); if (target !== this.moveTarget) { this.moveTarget = target; cx.notify(); } })
-        .on_mouse_up("left", (_e, cx) => { if (this.moving) { cx.stop_propagation(); this.finishMove(entry.dir ? `${this.root}/${path}` : ops.parentOf(`${this.root}/${path}`), cx); } })
+        .on_mouse_down("left", (e, cx) => { this.pressing = true; if (e.modifiers.alt && !this.on) { cx.stop_propagation(); this.moving = { src: `${this.root}/${path}` }; this.moveTarget = null; cx.notify(); } })
+        .on_mouse_move((e, cx) => {
+          // A drag from Finder arrives as moves with the left button held, but no press started here.
+          if (!this.moving && !this.pressing && e.pressed_button === "left" && !this.on) {
+            const target = entry.dir ? `${this.root}/${path}` : ops.parentOf(`${this.root}/${path}`);
+            this.dropAt = Date.now();
+            if (target !== this.dropHover) { this.dropHover = target; cx.notify(); }
+            return;
+          }
+          if (!this.moving) return; const target = entry.dir ? `${this.root}/${path}` : ops.parentOf(`${this.root}/${path}`); if (target !== this.moveTarget) { this.moveTarget = target; cx.notify(); } })
+        .on_mouse_up("left", (_e, cx) => { this.pressing = false; if (this.moving) { cx.stop_propagation(); this.finishMove(entry.dir ? `${this.root}/${path}` : ops.parentOf(`${this.root}/${path}`), cx); } })
         .on_click((e, cx) => { if (e.modifiers.alt) return; entry.dir ? this.toggle(path, cx) : this.open(path); })
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.openMenu({ path: `${this.root}/${path}`, dir: entry.dir }); })
         .on_drop((e, cx) => { cx.stop_propagation(); this.dropInto(entry.dir ? `${this.root}/${path}` : ops.parentOf(`${this.root}/${path}`), e.paths); })
@@ -430,6 +439,7 @@ export default class Files extends View {
 
   // Drops: from inside this folder a drop moves (like VS Code); from Finder it copies.
   async dropInto(dir, paths) {
+    this.dropHover = null; this.pressing = false;
     if (this.on) return fail("Drop not supported", "Dragging files works only on this Mac's folders.");
     for (const src of paths ?? []) {
       const r = await ops.paste(src, dir, { cut: ops.isInside(src, this.root) });
@@ -501,7 +511,8 @@ export default class Files extends View {
         .when(Boolean(this.file), el => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted).on_click((_e, cx) => { this.show(null); cx.notify(); }).child("←")))
         .child(div().font_semibold().child("Files"))
         .when(Boolean(this.moving), el => el.child(div().text_size(11.5).text_color(t.accent).child(`Moving ${ops.baseName(this.moving.src)}${this.moveTarget ? " → " + (ops.baseName(this.moveTarget) || "/") : ""}`)))
-        .when(!this.moving && Boolean(this.altHeld) && !this.on, el => el.child(div().text_size(11.5).text_color(t.dim).child("⌥ drag to move")))
+        .when(!this.moving && Boolean(this.dropHover), el => el.child(div().text_size(11.5).text_color(t.accent).child(`Copy into ${ops.baseName(this.dropHover) || "/"}`)))
+        .when(!this.moving && !this.dropHover && Boolean(this.altHeld) && !this.on, el => el.child(div().text_size(11.5).text_color(t.dim).child("⌥ drag to move")))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
       .when(!this.file, el => el.child(h_flex().id("files-hscroll").flex_1().min_h(0).min_w(0).overflow_x_scroll().child(v_flex().id("files-tree").flex_none().h_full().min_w_full().w(this.treeWidth(t)).overflow_y_scrollbar().p(6)
         .on_mouse_down("right", () => { if (this.root) this.openMenu({ path: this.root, dir: true, root: true }); })
@@ -510,8 +521,9 @@ export default class Files extends View {
           if (alt !== Boolean(this.altHeld)) { this.altHeld = alt; cx.notify(); }
           // The button came up outside a row (or outside the panel): cancel.
           if (this.moving && !e.pressed_button) { this.moving = null; this.moveTarget = null; cx.notify(); }
+          if (!e.pressed_button) { this.pressing = false; if (this.dropHover) { this.dropHover = null; cx.notify(); } }
         })
-        .on_mouse_up("left", (_e, cx) => { if (this.moving && this.root) this.finishMove(this.root, cx); })
+        .on_mouse_up("left", (_e, cx) => { this.pressing = false; if (this.moving && this.root) this.finishMove(this.root, cx); })
         .on_drop((e, cx) => { cx.stop_propagation(); if (this.root) this.dropInto(this.root, e.paths); })
         .children(this.treeRows())
         .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "Loading files…" : this.root ? "No files" : "No folder"))))
