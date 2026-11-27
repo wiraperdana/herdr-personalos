@@ -1,7 +1,7 @@
 // File operations for the Files context menu. The pure helpers are tested in tests/ops.test.mjs;
 // the rest runs small sh scripts through exec, so they work the same on a remote machine (`on`).
 import { exec } from "herdr";
-import { parentOf, joinPath, baseName, isInside, copyName } from "./paths.js";
+import { parentOf, joinPath, baseName, isInside, copyName, foldersOf } from "./paths.js";
 export * from "./paths.js";
 
 // Exit codes: 4 means the target already exists, nothing was touched.
@@ -16,6 +16,10 @@ const S = {
   trash: '/usr/bin/trash "$1"',
   remove: 'rm -rf "$1"',
   hasTrash: '[ -x /usr/bin/trash ]',
+  // Files under $1, relative, NUL-separated, skipping .git and common dependency and build folders.
+  // Git-ignored files are included on purpose: a workspace can keep most of its real files ignored.
+  // Capped at about 4 MB of names; find stops when head closes the pipe.
+  listAll: 'cd "$1" || exit 1; find . -mindepth 1 \\( -name .git -o -name node_modules -o -name .venv -o -name venv -o -name __pycache__ -o -name .next -o -name dist -o -name build -o -name target -o -name .cache -o -name .Trash \\) -prune -o \\( -type f -o -type l \\) -print0 2>/dev/null | head -c 4000000',
 };
 const sh = (script, args, on) => exec("sh", ["-c", script, "sh", ...args], { on: on ?? null });
 
@@ -56,3 +60,12 @@ export async function duplicate(src, on) {
 export async function canTrash(on) { return !on && (await sh(S.hasTrash, [], null)).code === 0; }
 export const trash = path => run(S.trash, [path], null);
 export const removeForever = (path, on) => run(S.remove, [path], on);
+
+// Every file under root plus their folders (ending in "/"), for Quick Open. At most `cap` entries.
+export async function listAll(root, on, cap = 50000) {
+  const r = await sh(S.listAll, [root], on);
+  const files = r.stdout.split("\0").filter(Boolean).map(f => f.replace(/^\.\//, ""));
+  // The 4 MB cut can leave half a name at the end; drop it.
+  if (r.stdout.length >= 4000000) files.pop();
+  return [...foldersOf(files), ...files].slice(0, cap);
+}

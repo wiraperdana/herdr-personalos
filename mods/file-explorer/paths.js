@@ -26,3 +26,34 @@ export function copyName(name, taken, { keepIfFree = false } = {}) {
     if (!used.has(candidate)) return candidate;
   }
 }
+
+// Quick Open: every word must appear somewhere in the path (any case, any order).
+// A word at the start of the name scores 3, inside the name 2, elsewhere in the path 0;
+// ties go to the shorter path. Folders end with "/".
+export function searchPaths(paths, query, limit = 50) {
+  const words = (query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const hits = [];
+  for (const p of paths) {
+    const lower = p.toLowerCase();
+    const name = lower.replace(/\/$/, "").split("/").pop();
+    let score = 0, ok = true;
+    for (const w of words) {
+      if (!lower.includes(w)) { ok = false; break; }
+      score += name.startsWith(w) ? 3 : name.includes(w) ? 2 : 0;
+    }
+    if (ok) hits.push([score, p]);
+  }
+  hits.sort((a, b) => b[0] - a[0] || a[1].length - b[1].length || a[1].localeCompare(b[1]));
+  return hits.slice(0, limit).map(h => h[1]);
+}
+
+// Every parent folder of the given file paths, once each, as "a/" and "a/b/".
+export function foldersOf(files) {
+  const out = new Set();
+  for (const f of files) {
+    const parts = f.split("/");
+    for (let i = 1; i < parts.length; i++) out.add(parts.slice(0, i).join("/") + "/");
+  }
+  return [...out];
+}

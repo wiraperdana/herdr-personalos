@@ -40,3 +40,31 @@ test("pasteTarget: a folder pastes into itself, a file into its parent", () => {
   assert.equal(pasteTarget({ path: "/r/a", dir: true }), "/r/a");
   assert.equal(pasteTarget({ path: "/r/a/x.md", dir: false }), "/r/a");
 });
+
+import { searchPaths, foldersOf } from "../mods/file-explorer/paths.js";
+
+test("searchPaths: every word must appear, case-insensitive, in any order", () => {
+  const all = ["docs/Renstra 2027.pdf", "docs/notes.md", "src/renstra.js", "README.md"];
+  assert.deepEqual(searchPaths(all, "renstra pdf"), ["docs/Renstra 2027.pdf"]);
+  assert.deepEqual(searchPaths(all, "PDF renstra"), ["docs/Renstra 2027.pdf"]);
+  assert.deepEqual(searchPaths(all, "zzz"), []);
+  assert.deepEqual(searchPaths(all, "  "), []);
+});
+
+test("searchPaths ranks a name match above a folder match, then shorter paths", () => {
+  const all = ["notes/a/b/c.md", "x/notes.md", "deep/folder/notes.md"];
+  assert.deepEqual(searchPaths(all, "notes"), ["x/notes.md", "deep/folder/notes.md", "notes/a/b/c.md"]);
+});
+
+test("searchPaths: a name that starts with the word beats one that only contains it", () => {
+  assert.deepEqual(searchPaths(["a/my-plan.md", "b/plan.md"], "plan"), ["b/plan.md", "a/my-plan.md"]);
+});
+
+test("searchPaths caps the result count", () => {
+  const all = Array.from({ length: 500 }, (_, i) => `f${i}.txt`);
+  assert.equal(searchPaths(all, "f", 50).length, 50);
+});
+
+test("foldersOf lists every parent folder once, with a trailing slash", () => {
+  assert.deepEqual(foldersOf(["a/b/c.md", "a/d.md", "e.md"]).sort(), ["a/", "a/b/"]);
+});

@@ -11,7 +11,7 @@ const CLIP = "file-explorer.clipboard", EVENT = "file-explorer.changed";
 const OPEN = "file-explorer.open", OPEN_MAX = 300;
 const openKey = (space, on, root) => `${space ?? ""}|${on ?? ""}|${root}`;
 const loadOpen = (space, on, root) => (shared(OPEN) ?? {})[openKey(space, on, root)] ?? [];
-const emit = (open, show) => setShared(EVENT, { seq: `${Date.now()}-${Math.random()}`, open: open ?? null, show: show ?? null });
+const emit = (open, show, reveal) => setShared(EVENT, { seq: `${Date.now()}-${Math.random()}`, open: open ?? null, show: show ?? null, reveal: reveal ?? null });
 // Copies of this mod share one script VM, so the panel's check reaches the popups too.
 const viewer = globalThis[Symbol.for("file-explorer.viewer")] ??= { installed: true };
 // Opens a file in a file-viewer tab, or (without that mod) asks the panel to show its built-in preview.
@@ -102,7 +102,7 @@ async function directory(path, on) {
 export default class Files extends View {
   init(_props, cx) {
     const p = props() ?? {};
-    if (p.menu || p.ask || p.confirm) return this.initPopup(p, cx);
+    if (p.menu || p.ask || p.confirm || p.search) return this.initPopup(p, cx);
     this.lastEvent = shared(EVENT)?.seq;
     // Files open in the file-viewer mod when it is installed; without it, in the built-in preview.
     cx.spawn(async () => { try { viewer.installed = (await exec("test", ["-f", `${appHome()}/mods/file-viewer/main.js`])).code === 0; } catch {} });
@@ -113,12 +113,14 @@ export default class Files extends View {
   }
 
   refreshIfDue(cx) {
+    if (this.revealed && Date.now() - this.revealedAt > 2500) { this.revealed = null; cx.notify(); }
     if (this.dropHover && Date.now() - (this.dropAt ?? 0) > 1500) { this.dropHover = null; cx.notify(); }
     const active = window()?.active !== false, context = this.context;
     const ev = shared(EVENT);
     if (ev && ev.seq !== this.lastEvent) {
       this.lastEvent = ev.seq;
       if (context) context.catchUp = true;
+      if (ev.reveal && this.root && ops.isInside(ev.reveal, this.root)) { this.revealed = ev.reveal.slice(this.root.length + 1); this.revealedAt = Date.now(); }
       if (ev.show && this.root && ops.isInside(ev.show, this.root)) this.show(ev.show.slice(this.root.length + 1), cx);
       // Open every folder down to the one that changed, so a new or pasted item is in view.
       if (ev.open && this.root && ops.isInside(ev.open, this.root) && ev.open !== this.root) {
@@ -327,6 +329,7 @@ export default class Files extends View {
         .when(!(this.altHeld || this.moving), el => el.drag_paths([`${this.root}/${path}`], { on: this.on ?? null }))
         .when((Boolean(this.moving) || Boolean(this.dropHover)) && (this.moving ? this.moveTarget : this.dropHover) === (entry.dir ? `${this.root}/${path}` : null), el => el.bg(t.hover).border_1().border_color(t.accent))
         .when(this.moving?.src === `${this.root}/${path}`, el => el.opacity(0.5))
+        .when(this.revealed === path, el => el.bg(t.hover).border_1().border_color(t.accent))
         .on_mouse_down("left", (e, cx) => { this.pressing = true; if (e.modifiers.alt && !this.on) { cx.stop_propagation(); this.moving = { src: `${this.root}/${path}` }; this.moveTarget = null; cx.notify(); } })
         .on_mouse_move((e, cx) => {
           // A drag from Finder arrives as moves with the left button held, but no press started here.
@@ -384,6 +387,19 @@ export default class Files extends View {
   initPopup(p, cx) {
     this.popup = p; this.at = -1; this.err = null; this.busy = false;
     this.handle = cx.focus_handle(); this.handle.focus();
+    if (p.search) {
+      this.all = null; this.hits = []; this.at = 0;
+      this.input = InputState.new({ value: "", placeholder: "Search files and folders by name" });
+      this.input.on("change", (_e, cx) => { this.filter(); cx.notify(); });
+      this.input.on("submit", (_e, cx) => this.pick(this.at, cx));
+      this.input.focus();
+      cx.timer.after(300, () => this.input.focus());
+      cx.spawn(async cx => {
+        try { this.all = await ops.listAll(p.root, p.on); } catch (e) { this.all = []; this.err = String(e); }
+        this.filter(); cx.notify();
+      });
+      return;
+    }
     if (p.ask) {
       const value = p.ask === "rename" ? ops.baseName(p.entry.path) : "";
       this.input = InputState.new({ value, placeholder: p.ask === "newFolder" ? "folder name" : "file name" });
@@ -394,6 +410,59 @@ export default class Files extends View {
       this.input.focus();
       cx.timer.after(300, () => this.input.focus());
     }
+  }
+
+  // ---- Quick Open ----
+
+  openSearch() {
+    if (!this.root) return;
+    openOverlay({ mod: "file-explorer", kind: "dialog", width: 640, props: { search: true, root: this.root, on: this.on ?? null } });
+  }
+
+  filter() {
+    this.hits = this.all ? ops.searchPaths(this.all, this.input.value(), 60) : [];
+    this.at = 0;
+  }
+
+  // A file opens (in the viewer when installed); a folder is opened in the tree and highlighted.
+  pick(i, cx) {
+    const rel = this.hits[i];
+    if (rel == null) return;
+    const { root, on } = this.popup, abs = ops.joinPath(root, rel.replace(/\/$/, ""));
+    this.dismiss();
+    if (rel.endsWith("/")) emit(abs, null, abs);
+    else { emit(ops.parentOf(abs), null, abs); openFile(abs, on); }
+  }
+
+  renderSearch(t) {
+    const p = this.popup, q = this.input.value().trim();
+    const row = (rel, i) => {
+      const dir = rel.endsWith("/"), clean = rel.replace(/\/$/, ""), cut = clean.lastIndexOf("/");
+      const name = clean.slice(cut + 1), where = cut > 0 ? clean.slice(0, cut) : "";
+      return h_flex().id(`qo-${i}`).h(30).px(8).gap(8).rounded(6).items_center().cursor_pointer()
+        .when(i === this.at, el => el.bg(t.hover))
+        .on_mouse_move((_e, cx) => { if (this.at !== i) { this.at = i; cx.notify(); } })
+        .on_click((_e, cx) => this.pick(i, cx))
+        .child(svg(`mods/file-explorer/${dir ? "folder" : "file"}.svg`).size(14).flex_none().text_color(t.muted))
+        .child(div().flex_none().whitespace_nowrap().child(name))
+        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(where));
+    };
+    const note = text => div().px(8).py(10).text_size(12).text_color(t.dim).child(text);
+    return v_flex().id("pf-search").track_focus(this.handle).w_full().p(10).gap(8).bg(t.popover).text_color(t.foreground).text_size(12.8)
+      .on_key_down((e, cx) => {
+        if (e.key === "escape") { this.dismiss(); cx.stop_propagation(); return; }
+        if (!this.hits.length) return;
+        if (e.key === "down") this.at = (this.at + 1) % this.hits.length;
+        else if (e.key === "up") this.at = (this.at + this.hits.length - 1) % this.hits.length;
+        else return;
+        cx.stop_propagation(); cx.notify();
+      })
+      .child(Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(t.accent).bg(t.background).text_size(13).text_color(t.foreground))
+      .child(v_flex().id("qo-list").max_h(420).overflow_y_scrollbar()
+        .when(this.all === null, el => el.child(note("Listing files…")))
+        .when(this.all !== null && !q, el => el.child(note(`${this.all.length.toLocaleString()} files and folders in ${ops.baseName(p.root) || p.root}. Type part of a name; several words narrow it down.`)))
+        .when(this.all !== null && Boolean(q) && !this.hits.length, el => el.child(note("No matches")))
+        .children(this.hits.map(row)));
   }
 
   // Not named close(): Herdr calls a view's close() itself when it goes away.
@@ -483,6 +552,7 @@ export default class Files extends View {
 
   renderPopup() {
     const t = theme(), p = this.popup;
+    if (p.search) return this.renderSearch(t);
     const button = (id, text, primary, danger, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
       .border_1().border_color(primary ? (danger ? t.ansi1 : t.solid) : t.input).bg(primary ? (danger ? t.ansi1 : t.solid) : t.raised)
       .text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium().cursor_pointer()
@@ -543,6 +613,8 @@ export default class Files extends View {
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .when(Boolean(this.file), el => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted).on_click((_e, cx) => { this.show(null); cx.notify(); }).child("←")))
         .child(div().font_semibold().child("Files"))
+        .when(Boolean(this.root) && !this.file, el => el.child(div().id("files-search").p(3).rounded(5).cursor_pointer().hover(s => s.bg(t.hover))
+          .on_click(() => this.openSearch()).child(svg("mods/file-explorer/search.svg").size(14).text_color(t.muted))))
         .when(Boolean(this.moving), el => el.child(div().text_size(11.5).text_color(t.accent).child(`Moving ${ops.baseName(this.moving.src)}${this.moveTarget ? " → " + (ops.baseName(this.moveTarget) || "/") : ""}`)))
         .when(!this.moving && Boolean(this.dropHover), el => el.child(div().text_size(11.5).text_color(t.accent).child(`Copy into ${ops.baseName(this.dropHover) || "/"}`)))
         .when(!this.moving && !this.dropHover && Boolean(this.altHeld) && !this.on, el => el.child(div().text_size(11.5).text_color(t.dim).child("⌥ drag to move")))
