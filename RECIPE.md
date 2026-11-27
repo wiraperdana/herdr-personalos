@@ -49,6 +49,7 @@ Herdr's default window with two changes for people who work from a file tree. Th
 - Shortcuts: `mods/personalos-viewer/keys.json` holds a `mod:personalos-viewer` section to merge into your `keys.json`.
 - In `personalos-files`, the name is `flex_none().whitespace_nowrap()` instead of `truncate()`. The tree is two scrollers. The outer `h_flex` uses `overflow_x_scroll()`, and the inner `v_flex` keeps the shipped `overflow_y_scrollbar()`. The inner one gets an explicit width `.w()` from the longest row (indent + icons + about 8.5px per character), with `min_w_full()` so short trees still fill the panel.
 - The other mods are shipped: `workspace-chrome`, `spaces`, `agents`, `tabs`, `changes`, `pane`, `workspace-status`.
+- Unlike the shipped `files` mod, the git mark (A, M, D, U) sits in a fixed slot at the left of each row, before the chevron and icon, so it stays visible while the tree scrolls sideways. The tree's width is estimated at 0.48 em per character, since gpui-kit cannot measure text.
 - Like the shipped `files` mod, it runs programs to list folders and read git status (`sh`, `git`, and `powershell` on Windows). It reads the folder of the focused terminal.
 
 ## Watch out
