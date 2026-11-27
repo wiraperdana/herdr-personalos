@@ -102,7 +102,7 @@
                       "id": "files",
                       "type": "block",
                       "content": {
-                        "mod": "personalos-files"
+                        "mod": "file-explorer"
                       }
                     },
                     {

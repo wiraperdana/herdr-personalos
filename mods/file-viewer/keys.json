@@ -1,0 +1,8 @@
+{
+  "mod:file-viewer": {
+    "cmd-e": "file-viewer.edit",
+    "cmd-r": "file-viewer.render",
+    "cmd-s": "file-viewer.save",
+    "cmd-o": "file-viewer.open"
+  }
+}
