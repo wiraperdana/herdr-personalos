@@ -14,7 +14,7 @@ herdr-app check ~/.config/herdr-app/mods/personalos-viewer
 herdr-app do layout.switch '{"name":"PersonalOS"}'
 ```
 
-Then merge the viewer's shortcuts (⌘E, ⌘R, ⌘S, ⌘O while a viewer has focus) from `mods/personalos-viewer/keys.json` into `~/.config/herdr-app/keys.json`. Add the `mod:personalos-viewer` section; don't replace your other keys. Editing `keys.json` makes it yours, so Herdr stops adding new default shortcuts to it on upgrade.
+Then merge the viewer's shortcuts (⌘E, ⌘R, ⌘S, ⌘O, and ⌘=, ⌘−, ⌘0 for image zoom, while a viewer has focus) from `mods/personalos-viewer/keys.json` into `~/.config/herdr-app/keys.json`. Add the `mod:personalos-viewer` section; don't replace your other keys. Editing `keys.json` makes it yours, so Herdr stops adding new default shortcuts to it on upgrade.
 
 Tests for the viewer's pure logic: `node --test tests/lib.test.mjs` (Node 18 or newer).
 

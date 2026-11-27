@@ -3,6 +3,10 @@
     "cmd-e": "personalos-viewer.edit",
     "cmd-r": "personalos-viewer.render",
     "cmd-s": "personalos-viewer.save",
-    "cmd-o": "personalos-viewer.open"
+    "cmd-o": "personalos-viewer.open",
+    "cmd-=": "personalos-viewer.zoom-in",
+    "cmd-+": "personalos-viewer.zoom-in",
+    "cmd--": "personalos-viewer.zoom-out",
+    "cmd-0": "personalos-viewer.zoom-fit"
   }
 }

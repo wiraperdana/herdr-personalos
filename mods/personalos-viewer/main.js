@@ -46,6 +46,9 @@ export default class Viewer extends View {
     else if (c === "save") this.save(cx);
     else if (c === "close-save") this.save(cx).then(r => { if (r === "saved") run("tab.close"); });
     else if (c === "reload") this.reload(cx);
+    else if (c === "zoom-in") { if (this.img) this.setZoom(this.scale() * 1.25, cx); }
+    else if (c === "zoom-out") { if (this.img) this.setZoom(this.scale() / 1.25, cx); }
+    else if (c === "zoom-fit") { if (this.img) this.setZoom(null, cx); }
     else if (c === "save-conflict") { if (this.mode === "edit") this.saveAsConflict(cx); }
     else if (c === "close-discard") { this.dropDraft(); run("tab.close"); }
   }
@@ -261,6 +264,20 @@ export default class Viewer extends View {
       .child(pill("raw", "Raw")).child(pill("render", "Render"));
   }
 
+  // Zoom: null means fit (at most 100%, inside 1400x900); otherwise a factor of the real size.
+  fitScale() { return Math.min(1, 1400 / this.img.w, 900 / this.img.h); }
+  scale() { return this.zoom ?? this.fitScale(); }
+  setZoom(z, cx) { this.zoom = z == null ? null : Math.min(8, Math.max(0.05, z)); cx.notify(); }
+
+  zoomBar(t) {
+    const btn = (id, label, cmd) => div().id(id).px(8).py(3).rounded(7).border_1().border_color(t.border).cursor_pointer()
+      .text_color(t.muted).hover(s => s.bg(t.hover)).on_click((_e, cx) => { this.command(cmd, cx); cx.notify(); }).child(label);
+    return h_flex().gap(4).items_center()
+      .child(btn("zoom-out", "−", "zoom-out"))
+      .child(btn("zoom-fit", this.zoom == null ? "Fit" : `${Math.round(this.scale() * 100)}%`, "zoom-fit"))
+      .child(btn("zoom-in", "+", "zoom-in"));
+  }
+
   body(t) {
     if (this.error) return div().p(12).text_color(t.dim).child(this.error);
     if (!this.mode) return div().p(12).text_color(t.dim).child("Loading file…");
@@ -268,9 +285,13 @@ export default class Viewer extends View {
     if (this.mode === "render") {
       if (this.group === 4) {
         if (!this.img) return div().p(12).text_color(t.dim).child("Loading image…");
-        const k = Math.min(1, 1400 / this.img.w, 900 / this.img.h);
-        return h_flex().id("viewer-image").flex_1().min_h(0).overflow_scrollbar().p(12).items_center().justify_center()
-          .child(image(this.img.rel).w(Math.round(this.img.w * k)).h(Math.round(this.img.h * k)).flex_none());
+        const k = this.scale();
+        // The inner box is at least the viewport and grows with the image: a small image sits centred,
+        // a large one pushes the box wider, so every edge stays reachable by scrolling.
+        return div().id("viewer-image").flex().flex_1().min_h(0).min_w(0).overflow_scrollbar()
+          .on_pinch((e, cx) => { this.setZoom(this.scale() * (1 + e.delta), cx); })
+          .child(h_flex().flex_none().min_w_full().min_h_full().p(12).items_center().justify_center()
+            .child(image(this.img.rel).w(Math.round(this.img.w * k)).h(Math.round(this.img.h * k)).flex_none()));
       }
       const view = this.group === 1 ? TextView.markdown("viewer-md", this.text) : TextView.html("viewer-html", this.text);
       return div().id("viewer-render").flex_1().min_h(0).overflow_y_scrollbar().px(24).py(16).child(view.selectable(true));
@@ -318,6 +339,7 @@ export default class Viewer extends View {
       .child(h_flex().h(36).flex_none().px(12).gap(8).items_center().border_b(1).border_color(t.border).text_size(12)
         .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(shown))
         .when(Boolean(this.actions?.raw && this.actions?.render), el => el.child(this.segment(t)))
+        .when(Boolean(this.group === 4 && this.img && this.mode === "render"), el => el.child(this.zoomBar(t)))
         .when(Boolean(this.on && this.group <= 3 && this.remoteWritable === false), el => el.child(div().text_size(11).text_color(t.dim).child("Read-only: this machine can't save remotely")))
         .when(Boolean(this.actions?.edit && this.mode !== "edit" && this.banner?.kind !== "draft"), el => el.child(div().id("viewer-edit").px(10).py(3).rounded(7).border_1().border_color(t.border)
           .cursor_pointer().text_color(t.muted).hover(s => s.bg(t.hover)).on_click((_e, cx) => this.startEdit(this.text, cx)).child("✎ Edit")))
