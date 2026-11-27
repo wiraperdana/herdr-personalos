@@ -41,7 +41,7 @@ export default class Viewer extends View {
     if (c === "open") this.openApp();
     else if (c === "finder") this.showInFinder();
     else if (c === "render") { if (this.actions?.raw && this.actions?.render) this.setMode(this.mode === "render" ? "raw" : "render", cx); }
-    else if (c === "close") this.close(cx);
+    else if (c === "close") this.askClose(cx);
     else if (c === "edit") this.startEdit(this.text, cx);
     else if (c === "save") this.save(cx);
     else if (c === "close-save") this.save(cx).then(r => { if (r === "saved") run("tab.close"); });
@@ -50,7 +50,11 @@ export default class Viewer extends View {
     else if (c === "close-discard") { this.dropDraft(); run("tab.close"); }
   }
 
-  close(_cx) {
+  // Herdr calls a view's close() itself when its tab closes, so the name close is taken.
+  // Ours must not run tab.close there, or a second tab.close hits the last tab and asks to close the space.
+  close() { this.saveDraft(); }
+
+  askClose(_cx) {
     if (!this.dirty) { run("tab.close"); return; }
     openOverlay({ mod: "personalos-viewer", kind: "dialog", width: 380, modal: true,
       props: { confirm: true, name: this.name, items: [["Save", "close-save", "⌘S"], ["Discard changes", "close-discard", ""], ["Cancel", "", "esc"]] } });
@@ -321,7 +325,7 @@ export default class Viewer extends View {
           .child(div().id("viewer-save").px(10).py(3).rounded(7).cursor_pointer().bg(this.dirty ? t.accent : t.hover).text_color(this.dirty ? t.background : t.muted)
             .on_click((_e, cx) => this.save(cx)).child("Save"))
           .child(div().id("viewer-done").px(10).py(3).rounded(7).border_1().border_color(t.border).cursor_pointer().text_color(t.muted)
-            .on_click((_e, cx) => this.dirty ? this.close(cx) : this.stopEdit(cx)).child(this.dirty ? "Close…" : "Done")))
+            .on_click((_e, cx) => this.dirty ? this.askClose(cx) : this.stopEdit(cx)).child(this.dirty ? "Close…" : "Done")))
         .when(Boolean(this.actions), el => el.child(div().id("viewer-more").px(8).py(2).rounded(6).cursor_pointer().text_color(t.muted)
           .hover(s => s.bg(t.hover)).on_click(() => this.openMenu()).child("⋯"))))
       .when(Boolean(this.banner), el => el.child(this.renderBanner(t)))
