@@ -4,7 +4,7 @@
 import { View, div, image } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, TextView } from "gpui-base";
 import { readTextFile, writeTextFile, notify, theme, settings, props, shared, setShared, exec, home, appHome, run, nextCommand, openOverlay, closeOverlay } from "herdr";
-import { canSaveRemote, saveRemote } from "./remote-save.js";
+import { canSaveRemote, saveRemote, uploadFile, localHash } from "./remote-save.js";
 import { groupOf, actionsFor, pickMode, extOf, cacheName, conflictName } from "./lib.js";
 
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
@@ -265,8 +265,45 @@ export default class Viewer extends View {
       try {
         const r = await exec("sh", ["-c", 'mkdir -p "$1" && hc exec --on "$2" -- cat "$3" > "$1/.$4.part" && mv -f "$1/.$4.part" "$1/$4" && open "$1/$4"', "sh", dir, this.on, this.path, this.name], { timeout: 600000 });
         if (r.code !== 0) this.fetchError = (r.stderr || `Download failed (code ${r.code})`).trim().split("\n").pop();
+        else {
+          // Remember what the copy held, then send each save made in the Mac app back (K-261127-15).
+          const h = await localHash(`${dir}/${this.name}`);
+          this.sync = { dir, file: `${dir}/${this.name}`, base: h, last: h, status: "Watching for saves", at: null };
+          this.watchCopy(cx);
+        }
       } catch (e) { this.fetchError = String(e); }
       finally { this.fetching = false; cx.notify(); }
+    });
+  }
+
+  // While this tab is open, a save to the downloaded copy (polled every 2 s) is uploaded over the remote file,
+  // unless the remote file changed since the download: then it lands as name.conflict.ext.
+  watchCopy(cx) {
+    if (this.watching) return;
+    this.watching = true;
+    cx.spawn(async cx => {
+      try {
+        let seen = null;
+        for (;;) {
+          // Poll the copy's modification time and size; folder watching missed back-to-back saves.
+          await cx.sleep(2000);
+          const st = await exec("stat", ["-f", "%m:%z", this.sync.file]).catch(() => null);
+          const stamp = st?.code === 0 ? st.stdout.trim() : null;
+          if (!stamp || stamp === seen) continue;
+          seen = stamp;
+          await cx.sleep(1000); // Apps write in steps; let the save finish.
+          const s = this.sync, h = await localHash(s.file);
+          if (!h || h === s.last || this.uploading) continue;
+          this.uploading = true; s.status = `Uploading to ${this.on}…`; cx.notify();
+          const r = await uploadFile(s.file, this.path, this.on, s.base);
+          this.uploading = false;
+          const time = new Date().toTimeString().slice(0, 5);
+          if (r.status === "saved") { s.base = s.last = h; s.status = `Saved to ${this.on} at ${time}`; }
+          else if (r.status === "conflict") { s.last = h; s.status = `Changed on ${this.on} meanwhile. Your version was saved as ${r.path.split("/").pop()} at ${time}`; }
+          else s.status = r.status === "unsupported" ? `${this.on} has no SHA-256 tool, so saves can't go back` : `Upload failed: ${r.error}`;
+          cx.notify();
+        }
+      } catch { this.watching = false; }
     });
   }
 
@@ -323,7 +360,8 @@ export default class Viewer extends View {
       .when(Boolean(this.actions?.openApp), el => el.child(div().id("card-open").mt(8).px(16).py(8).rounded(8).bg(t.accent).text_color(t.background).cursor_pointer()
         .on_click((_e, cx) => this.openApp(cx)).child(this.fetching ? `Copying from ${this.on}…` : "Open in default app")))
       .when(Boolean(this.on), el => el.child(div().text_size(12).text_color(t.dim).child(`On ${this.on}`)))
-      .when(Boolean(this.on && this.actions?.openApp), el => el.child(div().max_w(420).text_size(11.5).text_color(t.dim).text_center().child("Opens a copy on this Mac. Changes made there stay on this Mac.")))
+      .when(Boolean(this.on && this.actions?.openApp), el => el.child(div().max_w(440).text_size(11.5).text_color(t.dim).text_center()
+        .child(this.sync ? `${this.sync.status}. Saves in the Mac app go back to ${this.on} while this tab is open.` : `Opens a copy on this Mac. While this tab is open, saving it there sends it back to ${this.on}.`)))
       .when(Boolean(this.fetchError), el => el.child(div().text_size(12).text_color(t.ansi1).child(this.fetchError)));
   }
 

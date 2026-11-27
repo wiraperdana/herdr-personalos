@@ -7,7 +7,7 @@
 // Accepted risk: a write by someone else between steps 2 and 3 is overwritten.
 import { exec } from "herdr";
 import { createHash } from "crypto";
-import { chunkBase64, remoteScripts } from "./lib.js";
+import { chunkBase64, remoteScripts, conflictName } from "./lib.js";
 
 const S = remoteScripts();
 const sh = (script, args, on) => exec("sh", ["-c", script, "sh", ...args], { on });
@@ -40,5 +40,43 @@ export async function saveRemote(path, on, text, original) {
   } catch {
     try { await sh(S.cleanup, [tmp], on); } catch {}
     return "error";
+  }
+}
+
+// Sending a local file (any bytes) back over a remote one: used when a downloaded copy is
+// edited in a Mac app (K-261127-15). Same safety as saveRemote, but the bytes stream through
+// `hc exec -i` instead of base64 pieces. `baseHash` is the SHA-256 the copy had when downloaded.
+// Returns { status: "saved" | "conflict" | "unsupported" | "error", path?, error? }.
+// On a conflict the copy is written beside the target as name.conflict.ext, never over it.
+const STREAM = 'hc exec -i --timeout 600 --on "$1" -- sh -c \'cat > "$1"\' sh "$2" < "$3"';
+
+export async function localHash(file) {
+  const r = await exec("shasum", ["-a", "256", file]);
+  return r.code === 0 ? r.stdout.split(" ")[0] : null;
+}
+
+export async function uploadFile(local, path, on, baseHash) {
+  try {
+    const r = await sh(S.resolve, [path], on);
+    if (r.code === 0 && r.stdout) path = r.stdout;
+  } catch {}
+  const i = path.lastIndexOf("/"), dir = path.slice(0, i), name = path.slice(i + 1);
+  const tmp = `${dir}/.${name}.herdr-tmp`;
+  try {
+    const sent = await exec("sh", ["-c", STREAM, "sh", on, tmp, local], { timeout: 600000 });
+    if (sent.code !== 0) { await sh(S.cleanup, [tmp], on); return { status: "error", error: (sent.stderr || "Upload failed").trim().split("\n").pop() }; }
+    const code = (await sh(S.check, [path, baseHash], on)).code;
+    if (code === 3) { await sh(S.cleanup, [tmp], on); return { status: "unsupported" }; }
+    if (code !== 0) {
+      const taken = new Set(((await exec("ls", ["-A", dir], { on })).stdout || "").split("\n").filter(Boolean));
+      const other = `${dir}/${conflictName(name, n => taken.has(n))}`;
+      const done = await sh(S.commitNew, [tmp, other], on);
+      return done.code === 0 ? { status: "conflict", path: other } : { status: "error", error: "Couldn't write the conflict copy" };
+    }
+    const done = await sh(S.commit, [tmp, path], on);
+    return done.code === 0 ? { status: "saved", path } : { status: "error", error: "Couldn't replace the file" };
+  } catch (e) {
+    try { await sh(S.cleanup, [tmp], on); } catch {}
+    return { status: "error", error: String(e) };
   }
 }
