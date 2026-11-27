@@ -2,12 +2,13 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
 import { readTextFile, theme, settings, props } from "herdr";
+import { LIB_OK } from "./lib.js";
 
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
 
 export default class Viewer extends View {
   init(_props, cx) {
-    const p = props() ?? {};
+    const p = props() ?? {}; this.libOk = LIB_OK;
     this.path = p.path ?? null; this.on = p.on ?? null;
     this.code = null; this.error = this.path ? null : "No file";
     if (this.path) this.load(cx);
