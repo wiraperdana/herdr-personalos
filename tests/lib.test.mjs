@@ -57,3 +57,17 @@ test("conflictName", () => {
 test("quoteSh", () => {
   assert.equal(quoteSh("a b'c$"), "'a b'\\''c$'");
 });
+
+test("cacheName keeps the extension and is unique per path", () => {
+  const { cacheName } = lib;
+  assert.equal(cacheName("/a/b c/x.PNG").endsWith(".png"), true);
+  assert.notEqual(cacheName("/a/b/x.png"), cacheName("/a/b_x.png"));
+  assert.match(cacheName("/a/b'$/x.png"), /^[A-Za-z0-9_.-]+$/);
+});
+
+test("cacheName works without TextEncoder", () => {
+  const saved = globalThis.TextEncoder;
+  globalThis.TextEncoder = undefined;
+  try { assert.match(lib.cacheName("/a/é.png"), /^[0-9a-f]{16}\.png$/); }
+  finally { globalThis.TextEncoder = saved; }
+});

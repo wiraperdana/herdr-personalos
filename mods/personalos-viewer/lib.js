@@ -55,3 +55,21 @@ export function conflictName(name, taken) {
 }
 
 export function quoteSh(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+
+// A file name for an image's link in the app's data folder. image() only loads paths
+// inside the app folder, so the viewer links the real file there under this name.
+// UTF-8 bytes without TextEncoder, which Herdr's script engine lacks.
+function utf8(s) {
+  const out = [], enc = encodeURIComponent(s);
+  for (let i = 0; i < enc.length; i++) {
+    if (enc[i] === "%") { out.push(parseInt(enc.slice(i + 1, i + 3), 16)); i += 2; } else out.push(enc.charCodeAt(i));
+  }
+  return out;
+}
+
+export function cacheName(path) {
+  // Two FNV-1a hashes with different seeds: short, safe as a file name, collisions unlikely.
+  const fnv = seed => { let h = seed >>> 0; for (const b of utf8(path)) { h ^= b; h = Math.imul(h, 16777619) >>> 0; } return h.toString(16).padStart(8, "0"); };
+  const ext = extOf(path);
+  return fnv(2166136261) + fnv(0x9747b28c) + (ext ? "." + ext : "");
+}
