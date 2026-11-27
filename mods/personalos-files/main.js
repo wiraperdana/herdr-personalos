@@ -256,8 +256,8 @@ export default class Files extends View {
 
   // Builds the rows once per render and measures them; treeRows hands back the same rows.
   treeWidth(t) {
-    // No text measuring in gpui-kit: about 0.56 em per character in the UI font, a little over the average.
-    this.charW = 0.56 * (Number(settings()?.ui_font_size) || 13);
+    // No text measuring in gpui-kit: about 0.48 em per character in the UI font (measured on long names), plus a little slack per row.
+    this.charW = 0.48 * (Number(settings()?.ui_font_size) || 13);
     this.widest = 0; this.rowsCache = this.rows("", 0, [], t); return Math.ceil(this.widest + 12); }
   treeRows() { return this.rowsCache ?? []; }
 
@@ -267,7 +267,7 @@ export default class Files extends View {
       if (out.length >= TOTAL) break;
       // Rough width of this row, so the tree can be wider than the panel and scroll sideways.
       const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path), mark = this.marks[`${this.root}/${path}`];
-      this.widest = Math.max(this.widest ?? 0, 8 + depth * 18 + 12 + 7 + 14 + 7 + entry.name.length * this.charW + (mark ? 7 + 10 : 0) + 8);
+      this.widest = Math.max(this.widest ?? 0, 8 + depth * 18 + 12 + 7 + 14 + 7 + entry.name.length * this.charW + (mark ? 7 + 10 : 0) + 16);
       out.push(h_flex().id(`file-${path}`).h(28).flex_none().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover(s => s.bg(t.hover))
         .drag_paths([`${this.root}/${path}`], { on: this.on ?? null })
         .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.open(path))
