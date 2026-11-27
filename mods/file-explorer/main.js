@@ -7,10 +7,10 @@ import * as ops from "./ops.js";
 // The context menu, the name dialog and the delete dialog are popup copies of this mod.
 // They do the file work themselves, then post EVENT so the panel reloads (and opens `open`).
 const CLIP = "file-explorer.clipboard", EVENT = "file-explorer.changed";
-// Open folders per machine and root, kept in shared state so they survive space switches and restarts.
+// Open folders per space, machine and root, kept in shared state so they survive space switches and restarts.
 const OPEN = "file-explorer.open", OPEN_MAX = 300;
-const openKey = (on, root) => `${on ?? ""}|${root}`;
-const loadOpen = (on, root) => (shared(OPEN) ?? {})[openKey(on, root)] ?? [];
+const openKey = (space, on, root) => `${space ?? ""}|${on ?? ""}|${root}`;
+const loadOpen = (space, on, root) => (shared(OPEN) ?? {})[openKey(space, on, root)] ?? [];
 const emit = (open, show) => setShared(EVENT, { seq: `${Date.now()}-${Math.random()}`, open: open ?? null, show: show ?? null });
 // Copies of this mod share one script VM, so the panel's check reaches the popups too.
 const viewer = globalThis[Symbol.for("file-explorer.viewer")] ??= { installed: true };
@@ -171,7 +171,7 @@ export default class Files extends View {
   }
 
   refresh(cx) {
-    const { cwd, on } = location(), next = key();
+    const { cwd, on, space } = location(), next = key();
     const visiting = next !== this.context?.key;
     if (visiting) {
       if (this.context) {
@@ -179,7 +179,7 @@ export default class Files extends View {
         this.context.watch?.pending?.cancel();
       }
       const saved = this.saved.get(next);
-      this.context = { key: next, cwd, on, dirtyAt: 0 }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders ?? loadOpen(on, cwd));
+      this.context = { key: next, cwd, on, space, dirtyAt: 0 }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders ?? loadOpen(space, on, cwd));
       this.pending = new Set(); this.marks = {}; this.show(null); this.error = null; this.limited = false;
       this.loading = false;
       if (saved?.file) this.show(saved.file, cx);
@@ -252,7 +252,7 @@ export default class Files extends View {
 
   saveOpen() {
     if (!this.root) return;
-    const all = { ...(shared(OPEN) ?? {}) }, k = openKey(this.on, this.root);
+    const all = { ...(shared(OPEN) ?? {}) }, k = openKey(this.context?.space, this.on, this.root);
     delete all[k];
     if (this.folders.size) all[k] = [...this.folders];
     // Newest last; drop the oldest roots beyond the cap.
