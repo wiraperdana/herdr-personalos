@@ -7,6 +7,10 @@ import * as ops from "./ops.js";
 // The context menu, the name dialog and the delete dialog are popup copies of this mod.
 // They do the file work themselves, then post EVENT so the panel reloads (and opens `open`).
 const CLIP = "file-explorer.clipboard", EVENT = "file-explorer.changed";
+// Open folders per machine and root, kept in shared state so they survive space switches and restarts.
+const OPEN = "file-explorer.open", OPEN_MAX = 300;
+const openKey = (on, root) => `${on ?? ""}|${root}`;
+const loadOpen = (on, root) => (shared(OPEN) ?? {})[openKey(on, root)] ?? [];
 const emit = (open, show) => setShared(EVENT, { seq: `${Date.now()}-${Math.random()}`, open: open ?? null, show: show ?? null });
 // Copies of this mod share one script VM, so the panel's check reaches the popups too.
 const viewer = globalThis[Symbol.for("file-explorer.viewer")] ??= { installed: true };
@@ -120,6 +124,7 @@ export default class Files extends View {
       if (ev.open && this.root && ops.isInside(ev.open, this.root) && ev.open !== this.root) {
         const parts = ev.open.slice(this.root.length + 1).split("/");
         for (let i = 1; i <= parts.length; i++) this.folders.add(parts.slice(0, i).join("/"));
+        this.saveOpen();
       }
     }
     const refocused = active && this.windowActive === false;
@@ -174,7 +179,7 @@ export default class Files extends View {
         this.context.watch?.pending?.cancel();
       }
       const saved = this.saved.get(next);
-      this.context = { key: next, cwd, on, dirtyAt: 0 }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders);
+      this.context = { key: next, cwd, on, dirtyAt: 0 }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders ?? loadOpen(on, cwd));
       this.pending = new Set(); this.marks = {}; this.show(null); this.error = null; this.limited = false;
       this.loading = false;
       if (saved?.file) this.show(saved.file, cx);
@@ -203,10 +208,16 @@ export default class Files extends View {
       try {
         this.watch(cwd, context, cx);
         const dirtyAtListing = context.dirtyAt;
+        let gone = false;
         for (const path of ["", ...this.folders]) {
           if (!this.current(context)) return;
-          await this.loadFolder(path, context);
+          if (!path) { await this.loadFolder(path, context); continue; }
+          if (!this.folders.has(path)) continue;
+          // A remembered folder that was deleted or renamed is forgotten instead of failing the whole list.
+          try { await this.loadFolder(path, context); }
+          catch { for (const f of [...this.folders]) if (f === path || f.startsWith(path + "/")) { this.folders.delete(f); this.entries.delete(f); } gone = true; }
         }
+        if (gone) this.saveOpen();
         const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on }).catch(() => null);
         if (!this.current(context)) return;
         const marks = {};
@@ -239,6 +250,17 @@ export default class Files extends View {
     });
   }
 
+  saveOpen() {
+    if (!this.root) return;
+    const all = { ...(shared(OPEN) ?? {}) }, k = openKey(this.on, this.root);
+    delete all[k];
+    if (this.folders.size) all[k] = [...this.folders];
+    // Newest last; drop the oldest roots beyond the cap.
+    const keys = Object.keys(all);
+    for (const old of keys.slice(0, Math.max(0, keys.length - OPEN_MAX))) delete all[old];
+    setShared(OPEN, all);
+  }
+
   toggle(path, cx) {
     if (this.folders.has(path)) {
       for (const folder of [...this.folders]) if (folder === path || folder.startsWith(path + "/")) {
@@ -257,6 +279,7 @@ export default class Files extends View {
         });
       }
     }
+    this.saveOpen();
     cx.notify();
   }
 
