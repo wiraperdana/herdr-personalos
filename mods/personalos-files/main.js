@@ -1,7 +1,14 @@
 // A lazy file browser for the focused pane's folder, with bounded read-only previews.
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
-import { spaces, panes, focused, run, exec, readTextFile, watchFolder, theme, settings, window } from "herdr";
+import { v_flex, h_flex, Editor, EditorState, InputState, Input } from "gpui-base";
+import { spaces, panes, focused, run, exec, readTextFile, watchFolder, theme, settings, window, props, shared, setShared, openOverlay, closeOverlay, notify } from "herdr";
+import * as ops from "./ops.js";
+
+// The context menu, the name dialog and the delete dialog are popup copies of this mod.
+// They do the file work themselves, then post EVENT so the panel reloads (and opens `open`).
+const CLIP = "personalos-files.clipboard", EVENT = "personalos-files.changed";
+const emit = open => setShared(EVENT, { seq: `${Date.now()}-${Math.random()}`, open: open ?? null });
+const fail = (title, error) => notify({ title, body: error, level: "error" });
 
 // The panels share data in one VM, but their host tasks belong to separate copies.
 const scans = globalThis[Symbol.for("herdr.repoStatus.v2")] ??= new Map();
@@ -84,6 +91,9 @@ async function directory(path, on) {
 
 export default class Files extends View {
   init(_props, cx) {
+    const p = props() ?? {};
+    if (p.menu || p.ask || p.confirm) return this.initPopup(p, cx);
+    this.lastEvent = shared(EVENT)?.seq;
     this.saved = new Map();
     this.entries = new Map(); this.folders = new Set(); this.pending = new Set(); this.marks = {};
     this.refresh(cx);
@@ -92,6 +102,16 @@ export default class Files extends View {
 
   refreshIfDue(cx) {
     const active = window()?.active !== false, context = this.context;
+    const ev = shared(EVENT);
+    if (ev && ev.seq !== this.lastEvent) {
+      this.lastEvent = ev.seq;
+      if (context) context.catchUp = true;
+      // Open every folder down to the one that changed, so a new or pasted item is in view.
+      if (ev.open && this.root && ops.isInside(ev.open, this.root) && ev.open !== this.root) {
+        const parts = ev.open.slice(this.root.length + 1).split("/");
+        for (let i = 1; i <= parts.length; i++) this.folders.add(parts.slice(0, i).join("/"));
+      }
+    }
     const refocused = active && this.windowActive === false;
     this.windowActive = active;
     if (!context) return;
@@ -271,6 +291,8 @@ export default class Files extends View {
       out.push(h_flex().id(`file-${path}`).h(28).flex_none().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover(s => s.bg(t.hover))
         .drag_paths([`${this.root}/${path}`], { on: this.on ?? null })
         .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.open(path))
+        .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.openMenu({ path: `${this.root}/${path}`, dir: entry.dir }); })
+        .on_drop((e, cx) => { cx.stop_propagation(); this.dropInto(entry.dir ? `${this.root}/${path}` : ops.parentOf(`${this.root}/${path}`), e.paths); })
         // Git mark first, in a fixed slot, so it stays visible however far the tree scrolls sideways.
         .child(div().w(10).flex_none().text_size(11).text_color(mark === "A" ? t.ansi2 : mark === "D" || mark === "U" ? t.ansi1 : t.blocked).child(mark ?? ""))
         .child(entry.dir ? svg(`mods/personalos-files/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim) : div().w(12).flex_none())
@@ -281,7 +303,176 @@ export default class Files extends View {
     return out;
   }
 
+  // ---- Context menu (VS Code style) ----
+
+  openMenu(entry) {
+    const local = !this.on, clip = shared(CLIP), file = !entry.dir;
+    const canPaste = Boolean(clip && (clip.on ?? null) === (this.on ?? null));
+    const items = [
+      file && ["Open", "open"],
+      file && local && ["Open in Default App", "openApp"],
+      local && ["Reveal in Finder", "reveal"],
+      entry.dir && ["Open in Terminal", "terminal"],
+      null,
+      ["New File…", "newFile"],
+      ["New Folder…", "newFolder"],
+      null,
+      !entry.root && ["Cut", "cut"],
+      !entry.root && ["Copy", "copy"],
+      canPaste && [`Paste ${ops.baseName(clip.path)}`, "paste"],
+      !entry.root && ["Duplicate", "duplicate"],
+      null,
+      ["Copy Path", "copyPath"],
+      !entry.root && ["Copy Relative Path", "copyRelative"],
+      !entry.root && null,
+      !entry.root && ["Rename…", "rename"],
+      !entry.root && ["Delete", "delete"],
+    ].filter(x => x !== false);
+    // Drop separators at the ends and doubled ones.
+    const tidy = items.filter((x, i, a) => x || (i > 0 && i < a.length - 1 && a[i - 1]));
+    openOverlay({ mod: "personalos-files", kind: "popup", width: 240, props: { menu: true, entry, on: this.on ?? null, root: this.root, items: tidy } });
+  }
+
+  initPopup(p, cx) {
+    this.popup = p; this.at = -1; this.err = null; this.busy = false;
+    this.handle = cx.focus_handle(); this.handle.focus();
+    if (p.ask) {
+      const value = p.ask === "rename" ? ops.baseName(p.entry.path) : "";
+      this.input = InputState.new({ value, placeholder: p.ask === "newFolder" ? "folder name" : "file name" });
+      const dot = value.lastIndexOf(".");
+      if (value) this.input.set_selected_range({ start: 0, end: dot > 0 && !p.entry.dir ? dot : value.length });
+      this.input.on("change", (_e, cx) => { this.err = null; cx.notify(); });
+      this.input.on("submit", (_e, cx) => this.submitName(cx));
+      this.input.focus();
+      cx.timer.after(300, () => this.input.focus());
+    }
+  }
+
+  // Not named close(): Herdr calls a view's close() itself when it goes away.
+  dismiss() { if (this.popup) closeOverlay(this.popup.overlay); }
+
+  // Runs one menu choice. Called on the popup copy, which carries entry, on and root in its props.
+  async act(a, cx) {
+    const { entry, on, root } = this.popup, path = entry.path, dir = entry.dir ? path : ops.parentOf(path);
+    const dialog = extra => openOverlay({ mod: "personalos-files", kind: "dialog", width: 380, modal: true, props: { entry, on, root, ...extra } });
+    // Slow work finishes before the popup closes: closing it ends this copy and its pending tasks.
+    if (a === "duplicate" || a === "paste" || a === "delete") { if (this.busy) return; this.busy = true; cx.notify(); }
+    else this.dismiss();
+    if (a === "open") run("tab.new", { name: ops.baseName(path), mod: "personalos-viewer", props: { path, on } });
+    else if (a === "openApp") exec("open", [path]).catch(() => {});
+    else if (a === "reveal") exec("open", entry.root ? [path] : ["-R", path]).catch(() => {});
+    else if (a === "terminal") run("tab.new", { folder: path, name: ops.baseName(path) });
+    else if (a === "newFile" || a === "newFolder" || a === "rename") dialog({ ask: a });
+    else if (a === "cut" || a === "copy") setShared(CLIP, { path, on, cut: a === "cut" });
+    else if (a === "copyPath") cx.write_to_clipboard(path);
+    else if (a === "copyRelative") cx.write_to_clipboard(path.slice(root.length + 1));
+    else if (a === "duplicate") { const r = await ops.duplicate(path, on); this.dismiss(); r.ok ? emit(ops.parentOf(r.path)) : fail("Duplicate failed", r.error); }
+    else if (a === "paste") {
+      const clip = shared(CLIP);
+      if (!clip) return this.dismiss();
+      const r = await ops.paste(clip.path, dir, { cut: clip.cut, on });
+      this.dismiss();
+      if (!r.ok) return fail("Paste failed", r.error);
+      if (clip.cut) setShared(CLIP, null);
+      emit(dir);
+    }
+    else if (a === "delete") { const trash = await ops.canTrash(on); this.dismiss(); dialog({ confirm: true, trash }); }
+  }
+
+  async submitName(cx) {
+    if (this.busy) return;
+    const { ask, entry, on } = this.popup, name = this.input.value().trim();
+    const bad = ops.validName(name);
+    if (bad) { this.err = bad; cx.notify(); return; }
+    const dir = ask === "rename" ? ops.parentOf(entry.path) : (entry.dir ? entry.path : ops.parentOf(entry.path));
+    const target = ops.joinPath(dir, name);
+    if (ask === "rename" && target === entry.path) { this.dismiss(); return; }
+    this.busy = true;
+    const r = ask === "newFile" ? await ops.newFile(target, on) : ask === "newFolder" ? await ops.newFolder(target, on) : await ops.rename(entry.path, target, on);
+    this.busy = false;
+    if (!r.ok) { this.err = r.error; cx.notify(); return; }
+    this.dismiss();
+    emit(ask === "newFolder" ? target : dir);
+    if (ask === "newFile") run("tab.new", { name, mod: "personalos-viewer", props: { path: target, on } });
+  }
+
+  async confirmDelete(cx) {
+    if (this.busy) return;
+    const { entry, on, trash } = this.popup;
+    this.busy = true; cx.notify();
+    const r = trash ? await ops.trash(entry.path) : await ops.removeForever(entry.path, on);
+    this.busy = false;
+    if (!r.ok) { this.err = r.error; cx.notify(); return; }
+    const clip = shared(CLIP);
+    if (clip && ops.isInside(clip.path, entry.path)) setShared(CLIP, null);
+    this.dismiss();
+    emit(null);
+  }
+
+  // Drops: from inside this folder a drop moves (like VS Code); from Finder it copies.
+  async dropInto(dir, paths) {
+    if (this.on) return fail("Drop not supported", "Dragging files works only on this Mac's folders.");
+    for (const src of paths ?? []) {
+      const r = await ops.paste(src, dir, { cut: ops.isInside(src, this.root) });
+      if (!r.ok) fail(`Couldn't ${ops.isInside(src, this.root) ? "move" : "copy"} ${ops.baseName(src)}`, r.error);
+    }
+    emit(dir);
+  }
+
+  renderPopup() {
+    const t = theme(), p = this.popup;
+    const button = (id, text, primary, danger, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
+      .border_1().border_color(primary ? (danger ? t.ansi1 : t.solid) : t.input).bg(primary ? (danger ? t.ansi1 : t.solid) : t.raised)
+      .text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium().cursor_pointer()
+      .hover(s => s.opacity(0.88)).on_click((_e, cx) => action(cx)).child(text);
+    const error = () => div().pt(8).text_size(11.5).text_color(t.ansi1).child(this.err ?? "");
+    if (p.ask) {
+      const title = { newFile: "New file", newFolder: "New folder", rename: `Rename ${ops.baseName(p.entry.path)}` }[p.ask];
+      return v_flex().id("pf-ask").track_focus(this.handle).w_full().p(18).bg(t.popover).text_color(t.foreground)
+        .on_key_down((e, cx) => { if (e.key === "escape") { this.dismiss(); cx.stop_propagation(); } })
+        .child(div().text_size(15).font_semibold().child(title))
+        .child(div().pt(4).text_size(11.5).text_color(t.dim).truncate().child(`in ${p.ask === "rename" || !p.entry.dir ? ops.parentOf(p.entry.path) : p.entry.path}`))
+        .child(div().pt(12).child(Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(this.err ? t.ansi1 : t.accent).bg(t.background).text_size(12.8).text_color(t.foreground)))
+        .when(Boolean(this.err), el => el.child(error()))
+        .child(h_flex().pt(18).gap(8).justify_end()
+          .child(button("pf-cancel", "Cancel", false, false, () => this.dismiss()))
+          .child(button("pf-ok", p.ask === "rename" ? "Rename" : "Create", true, false, cx => this.submitName(cx))));
+    }
+    if (p.confirm) {
+      const name = ops.baseName(p.entry.path);
+      return v_flex().id("pf-confirm").track_focus(this.handle).w_full().p(18).bg(t.popover).text_color(t.foreground)
+        .on_key_down((e, cx) => { if (e.key === "escape") { this.dismiss(); cx.stop_propagation(); } else if (e.key === "enter") this.confirmDelete(cx); })
+        .child(div().text_size(15).font_semibold().child(p.trash ? `Move ${name} to Trash?` : `Delete ${name} permanently?`))
+        .child(div().pt(6).text_size(12).text_color(t.dim).child(p.trash ? "You can restore it from the Trash." : `This machine${p.on ? ` (${p.on})` : ""} has no Trash. It can't be undone.`))
+        .when(Boolean(this.err), el => el.child(error()))
+        .child(h_flex().pt(18).gap(8).justify_end()
+          .child(button("pf-cancel", "Cancel", false, false, () => this.dismiss()))
+          .child(button("pf-del", this.busy ? "Deleting…" : p.trash ? "Move to Trash" : "Delete", true, true, cx => this.confirmDelete(cx))));
+    }
+    const items = p.items ?? [], real = items.map((x, i) => x ? i : -1).filter(i => i >= 0);
+    const choose = (i, cx) => { const it = items[i]; if (it) this.act(it[1], cx); };
+    return v_flex().id("pf-menu").track_focus(this.handle).w_full().p(5).bg(t.popover).text_size(12.8).text_color(t.foreground)
+      .on_key_down((e, cx) => {
+        const k = real.indexOf(this.at);
+        if (e.key === "down") this.at = real[(k + 1) % real.length];
+        else if (e.key === "up") this.at = real[(k <= 0 ? real.length : k) - 1];
+        else if (e.key === "enter") { if (this.at >= 0) choose(this.at, cx); }
+        else if (e.key === "escape") this.dismiss();
+        else return;
+        cx.notify();
+      })
+      .children(items.map((it, i) => it
+        ? h_flex().id(`pf-${i}`).h(28).px(8).rounded(6).items_center().justify_between().cursor_pointer()
+          .when(i === this.at, el => el.bg(t.hover))
+          .when(it[1] === "delete", el => el.text_color(t.ansi1))
+          .on_mouse_move((_e, cx) => { if (this.at !== i) { this.at = i; cx.notify(); } })
+          .on_click((_e, cx) => choose(i, cx))
+          .child(div().child(it[0])).child(div().text_size(11.5).text_color(t.dim).child(it[2] ?? ""))
+        : div().id(`pf-sep-${i}`).h(1).mx(6).my(4).bg(t.border)));
+  }
+
   render(cx) {
+    if (this.popup) return this.renderPopup();
     if (key() !== this.context?.key) this.refresh(cx);
     else this.refreshIfDue(cx);
     const t = theme();
@@ -291,7 +482,10 @@ export default class Files extends View {
         .when(Boolean(this.file), el => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted).on_click((_e, cx) => { this.show(null); cx.notify(); }).child("←")))
         .child(div().font_semibold().child("Files"))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
-      .when(!this.file, el => el.child(h_flex().id("files-hscroll").flex_1().min_h(0).min_w(0).overflow_x_scroll().child(v_flex().id("files-tree").flex_none().h_full().min_w_full().w(this.treeWidth(t)).overflow_y_scrollbar().p(6).children(this.treeRows())
+      .when(!this.file, el => el.child(h_flex().id("files-hscroll").flex_1().min_h(0).min_w(0).overflow_x_scroll().child(v_flex().id("files-tree").flex_none().h_full().min_w_full().w(this.treeWidth(t)).overflow_y_scrollbar().p(6)
+        .on_mouse_down("right", () => { if (this.root) this.openMenu({ path: this.root, dir: true, root: true }); })
+        .on_drop((e, cx) => { cx.stop_propagation(); if (this.root) this.dropInto(this.root, e.paths); })
+        .children(this.treeRows())
         .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "Loading files…" : this.root ? "No files" : "No folder"))))
         .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total"))))))
       .when(Boolean(this.file), el => el.child(this.code

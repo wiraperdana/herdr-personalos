@@ -50,6 +50,11 @@ Herdr's default window with two changes for people who work from a file tree. Th
 - In `personalos-files`, the name is `flex_none().whitespace_nowrap()` instead of `truncate()`. The tree is two scrollers. The outer `h_flex` uses `overflow_x_scroll()`, and the inner `v_flex` keeps the shipped `overflow_y_scrollbar()`. The inner one gets an explicit width `.w()` from the longest row (indent + icons + about 8.5px per character), with `min_w_full()` so short trees still fill the panel.
 - The other mods are shipped: `workspace-chrome`, `spaces`, `agents`, `tabs`, `changes`, `pane`, `workspace-status`.
 - Unlike the shipped `files` mod, the git mark (A, M, D, U) sits in a fixed slot at the left of each row, before the chevron and icon, so it stays visible while the tree scrolls sideways. The tree's width is estimated at 0.48 em per character, since gpui-kit cannot measure text.
+- Right-click a row (or the empty space below the tree, for the root folder) to open a menu like VS Code's Explorer: Open, Open in Default App, Reveal in Finder, Open in Terminal, New File…, New Folder…, Cut, Copy, Paste, Duplicate, Copy Path, Copy Relative Path, Rename…, Delete. Pasting into the same folder names the copy `name copy.ext`, then `name copy 2.ext`, like Finder. A cut refuses to replace an existing name, and a folder can't go inside itself. A new file opens in the viewer.
+- Delete asks first. Local items go to the macOS Trash (`/usr/bin/trash`, macOS 15 or newer). A remote machine has no Trash, so the dialog says the delete is permanent.
+- Drag rows onto a folder to move them there, or drop files from Finder to copy them in. Drops work on local folders only.
+- Built from: the menu and both dialogs are popup copies of this mod (`props().menu`, `ask`, `confirm`). They run the file work themselves through `ops.js` (small `sh` scripts via `exec`, so remote machines work too), then post `shared("personalos-files.changed")`. The panel sees it on its 500 ms tick, reloads, and opens the folders down to the changed item. The cut/copy clipboard is `shared("personalos-files.clipboard")`, separate from the text clipboard. `paths.js` holds the pure helpers, tested by `tests/ops.test.mjs`.
+- Watch out: closing a popup ends its copy and any task still running in it, so the popup finishes slow work (paste, duplicate) before it closes itself. And don't call your own method `close()`, Herdr calls that when a view goes away.
 - Like the shipped `files` mod, it runs programs to list folders and read git status (`sh`, `git`, and `powershell` on Windows). It reads the folder of the focused terminal.
 
 ## Watch out
@@ -73,7 +78,7 @@ Herdr's default window with two changes for people who work from a file tree. Th
 
 ## Done when
 
-- `herdr-app check` passes for `mods/personalos-files` and `mods/personalos-viewer`, and `node --test tests/lib.test.mjs` passes.
+- `herdr-app check` passes for `mods/personalos-files` and `mods/personalos-viewer`, and `node --test tests/lib.test.mjs tests/ops.test.mjs` passes.
 - After `layout.switch {"name":"PersonalOS"}`, the Files panel opens on the left of the terminals.
 - Dragging a file from Files into a shell types its absolute path, and dragging a folder does the same.
 - A click on a file opens a new tab named after it. A click on a folder still folds it.
