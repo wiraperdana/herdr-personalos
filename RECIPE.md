@@ -27,11 +27,11 @@ Herdr's default window with two changes for people who work from a file tree. Th
   An unknown extension is read: text goes to group 3, a NUL byte or unreadable bytes (for example Latin-1) to group 5.
 - The viewer opens in the last mode you picked for that extension (Raw or Render). Edit is never remembered, so a file always opens read-only.
 - Shortcuts while a viewer has focus: ⌘E edit, ⌘R switch Raw and Render, ⌘S save, ⌘O open in the default app. On an image, zoom with a trackpad pinch or the toolbar's − Fit + buttons. There are no zoom keys: Herdr keeps ⌘=, ⌘− and ⌘0 for zooming the whole app.
-- ⋯ holds Open in default app, Show in Finder, Save (while editing) and Close. Open and Finder are local only.
+- ⋯ holds Open in default app, Show in Finder, Save (while editing) and Close. Show in Finder is local only.
 - Editing marks the tab `● name`. Save writes only if the file still holds what was opened. If someone (an agent, say) changed it meanwhile, the save is refused and the banner offers **Reload** (drop your edits) or **Save as conflict file** (`notes.conflict.md`, then `notes.conflict-2.md`). There is no overwrite-anyway. A deleted file offers only the conflict file.
 - Close with unsaved changes asks Save, Discard or Cancel. Herdr gives mods no hook for the tab bar's ×, so the viewer keeps a draft every 3 seconds. Reopening the file offers to restore it, with the same conflict rule if the file changed since.
 - Files over 400,000 characters show truncated and cannot be edited.
-- Text files on another machine (a space's `machine`) can be edited and saved too. Machines without `sh`, `base64` and a SHA-256 tool stay read-only, with a note in the toolbar. Remote images and binaries show the card.
+- Text files on another machine (a space's `machine`) can be edited and saved too. Machines without `sh`, `base64` and a SHA-256 tool stay read-only, with a note in the toolbar. Remote images and binaries show the card, and its **Open in default app** copies the file to `<appHome>/data/file-viewer/remote/<hash>/<name>` (`hc exec --on <machine> -- cat`, fresh on every open) and opens that copy, with a note that changes made there stay on this Mac.
 - Pressing a row and dragging it onto a terminal pastes the absolute path of that file or folder at the cursor. Herdr's own terminal drop handling does the pasting, so paths with spaces are escaped exactly as a drop from Finder. Dropping anywhere else cancels.
 - Long file names show in full. The tree scrolls sideways (trackpad or shift+wheel) instead of cutting names with an ellipsis.
 - Agent status, tabs, spaces and keys behave exactly as in `main`.

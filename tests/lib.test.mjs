@@ -138,3 +138,12 @@ test("remote commitNew refuses an existing file", () => {
   assert.equal(readFileSync(target, "utf8"), "keep\n");
   assert.equal(existsSync(tmp), false);
 });
+
+test("remote images and binaries can open in the default app (from a downloaded copy); remote text stays in the viewer", () => {
+  const remote = { remote: true, tooLarge: false, remoteWritable: true };
+  assert.equal(actionsFor(5, remote).openApp, true);
+  assert.equal(actionsFor(4, remote).openApp, true);
+  assert.equal(actionsFor(3, remote).openApp, false);
+  assert.equal(actionsFor(1, remote).openApp, false);
+  assert.equal(actionsFor(5, remote).finder, false);
+});

@@ -38,7 +38,7 @@ export default class Viewer extends View {
   }
 
   command(c, cx) {
-    if (c === "open") this.openApp();
+    if (c === "open") this.openApp(cx);
     else if (c === "finder") this.showInFinder();
     else if (c === "render") { if (this.actions?.raw && this.actions?.render) this.setMode(this.mode === "render" ? "raw" : "render", cx); }
     else if (c === "close") this.askClose(cx);
@@ -253,7 +253,22 @@ export default class Viewer extends View {
     cx?.notify();
   }
 
-  openApp() { if (this.actions?.openApp) exec("open", [this.path]).catch(() => {}); }
+  openApp(cx) {
+    if (!this.actions?.openApp) return;
+    if (!this.on) { exec("open", [this.path]).catch(() => {}); return; }
+    if (this.fetching || !cx) return;
+    // A remote file is copied to <appHome>/data/file-viewer/remote/<hash>/<name> each time, then opened.
+    // The copy is fresh on every open; edits made in the Mac app stay on the Mac.
+    const dir = `${appHome()}/data/file-viewer/remote/${cacheName(`${this.on}|${this.path}`)}`;
+    this.fetching = true; this.fetchError = null; cx.notify();
+    cx.spawn(async cx => {
+      try {
+        const r = await exec("sh", ["-c", 'mkdir -p "$1" && hc exec --on "$2" -- cat "$3" > "$1/.$4.part" && mv -f "$1/.$4.part" "$1/$4" && open "$1/$4"', "sh", dir, this.on, this.path, this.name], { timeout: 600000 });
+        if (r.code !== 0) this.fetchError = (r.stderr || `Download failed (code ${r.code})`).trim().split("\n").pop();
+      } catch (e) { this.fetchError = String(e); }
+      finally { this.fetching = false; cx.notify(); }
+    });
+  }
 
   segment(t) {
     const pill = (mode, label) => div().id(`mode-${mode}`).px(10).py(3).cursor_pointer()
@@ -306,8 +321,10 @@ export default class Viewer extends View {
       .child(div().text_size(16).font_semibold().child(this.name))
       .child(div().text_size(12).text_color(t.dim).child([sizeLabel(this.size), this.ext ? this.ext.toUpperCase() + " file" : "File"].filter(Boolean).join(" · ")))
       .when(Boolean(this.actions?.openApp), el => el.child(div().id("card-open").mt(8).px(16).py(8).rounded(8).bg(t.accent).text_color(t.background).cursor_pointer()
-        .on_click(() => this.openApp()).child("Open in default app")))
-      .when(Boolean(this.on), el => el.child(div().text_size(12).text_color(t.dim).child(`On ${this.on}`)));
+        .on_click((_e, cx) => this.openApp(cx)).child(this.fetching ? `Copying from ${this.on}…` : "Open in default app")))
+      .when(Boolean(this.on), el => el.child(div().text_size(12).text_color(t.dim).child(`On ${this.on}`)))
+      .when(Boolean(this.on && this.actions?.openApp), el => el.child(div().max_w(420).text_size(11.5).text_color(t.dim).text_center().child("Opens a copy on this Mac. Changes made there stay on this Mac.")))
+      .when(Boolean(this.fetchError), el => el.child(div().text_size(12).text_color(t.ansi1).child(this.fetchError)));
   }
 
   renderMenu(t) {

@@ -33,7 +33,8 @@ export function actionsFor(group, { remote = false, tooLarge = false, remoteWrit
     raw: text,
     render: group === 1 || group === 2 || group === 4,
     edit: text && !tooLarge && (!remote || remoteWritable),
-    openApp: !remote,
+    // Remote images and binaries open from a copy downloaded to this Mac; remote text stays in the viewer.
+    openApp: !remote || group >= 4,
     finder: !remote,
   };
 }
