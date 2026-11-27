@@ -69,3 +69,19 @@ export async function listAll(root, on, cap = 50000) {
   if (r.stdout.length >= 4000000) files.pop();
   return [...foldersOf(files), ...files].slice(0, cap);
 }
+
+// Copies a local file or folder (dropped from Finder) into `dir` on machine `on`.
+// tar streams it through `hc exec -i`, into a temp folder beside the target first, so a clash
+// with an existing name (exit 4) leaves the target folder untouched. macOS metadata stays home.
+const UPLOAD = 'd="$1"; src="$2"; dst="$3"; t=$(mktemp -d "$d/.herdr-upload.XXXXXX") || exit 1; '
+  + 'if ! tar -C "$t" -xf - 2>/dev/null; then rm -rf "$t"; exit 1; fi; '
+  + 'if [ -e "$d/$dst" ]; then rm -rf "$t"; exit 4; fi; mv "$t/$src" "$d/$dst"; s=$?; rm -rf "$t"; exit $s';
+const SEND = 'COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C "$1" -cf - "$2" | hc exec -i --timeout 600 --on "$3" -- sh -c "$4" sh "$5" "$2" "$6"';
+
+export async function upload(src, dir, on) {
+  const name = copyName(baseName(src), await names(dir, on), { keepIfFree: true });
+  const r = await exec("sh", ["-c", SEND, "sh", parentOf(src), baseName(src), on, UPLOAD, dir, name], { timeout: 600000 });
+  if (r.code === 0) return { ok: true, path: joinPath(dir, name) };
+  if (r.code === 4) return { ok: false, error: "Something with that name is already there" };
+  return { ok: false, error: (r.stderr || r.stdout || `Failed (code ${r.code})`).trim().split("\n").pop() };
+}

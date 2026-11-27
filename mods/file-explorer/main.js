@@ -330,10 +330,10 @@ export default class Files extends View {
         .when((Boolean(this.moving) || Boolean(this.dropHover)) && (this.moving ? this.moveTarget : this.dropHover) === (entry.dir ? `${this.root}/${path}` : null), el => el.bg(t.hover).border_1().border_color(t.accent))
         .when(this.moving?.src === `${this.root}/${path}`, el => el.opacity(0.5))
         .when(this.revealed === path, el => el.bg(t.hover).border_1().border_color(t.accent))
-        .on_mouse_down("left", (e, cx) => { this.pressing = true; if (e.modifiers.alt && !this.on) { cx.stop_propagation(); this.moving = { src: `${this.root}/${path}` }; this.moveTarget = null; cx.notify(); } })
+        .on_mouse_down("left", (e, cx) => { this.pressing = true; if (e.modifiers.alt) { cx.stop_propagation(); this.moving = { src: `${this.root}/${path}` }; this.moveTarget = null; cx.notify(); } })
         .on_mouse_move((e, cx) => {
           // A drag from Finder arrives as moves with the left button held, but no press started here.
-          if (!this.moving && !this.pressing && e.pressed_button === "left" && !this.on) {
+          if (!this.moving && !this.pressing && e.pressed_button === "left") {
             const target = entry.dir ? `${this.root}/${path}` : ops.parentOf(`${this.root}/${path}`);
             this.dropAt = Date.now();
             if (target !== this.dropHover) { this.dropHover = target; cx.notify(); }
@@ -532,7 +532,7 @@ export default class Files extends View {
     const src = this.moving?.src;
     this.moving = null; this.moveTarget = null; cx.notify();
     if (!src || ops.parentOf(src) === dir) return;
-    const r = await ops.paste(src, dir, { cut: true });
+    const r = await ops.paste(src, dir, { cut: true, on: this.on });
     if (!r.ok) return fail(`Couldn't move ${ops.baseName(src)}`, r.error);
     const clip = shared(CLIP);
     if (clip && ops.isInside(clip.path, src)) setShared(CLIP, null);
@@ -542,8 +542,10 @@ export default class Files extends View {
   // Drops: from inside this folder a drop moves (like VS Code); from Finder it copies.
   async dropInto(dir, paths) {
     this.dropHover = null; this.pressing = false;
-    if (this.on) return fail("Drop not supported", "Dragging files works only on this Mac's folders.");
+    // Finder paths are on this Mac. In a remote space they are uploaded to that machine.
+    if (this.on && paths?.length) notify({ title: `Copying ${paths.length === 1 ? ops.baseName(paths[0]) : paths.length + " items"} to ${this.on}…`, level: "info", timeout: 3000 });
     for (const src of paths ?? []) {
+      if (this.on) { const r = await ops.upload(src, dir, this.on); if (!r.ok) fail(`Couldn't copy ${ops.baseName(src)} to ${this.on}`, r.error); continue; }
       const r = await ops.paste(src, dir, { cut: ops.isInside(src, this.root) });
       if (!r.ok) fail(`Couldn't ${ops.isInside(src, this.root) ? "move" : "copy"} ${ops.baseName(src)}`, r.error);
     }
@@ -617,7 +619,7 @@ export default class Files extends View {
           .on_click(() => this.openSearch()).child(svg("mods/file-explorer/search.svg").size(14).text_color(t.muted))))
         .when(Boolean(this.moving), el => el.child(div().text_size(11.5).text_color(t.accent).child(`Moving ${ops.baseName(this.moving.src)}${this.moveTarget ? " → " + (ops.baseName(this.moveTarget) || "/") : ""}`)))
         .when(!this.moving && Boolean(this.dropHover), el => el.child(div().text_size(11.5).text_color(t.accent).child(`Copy into ${ops.baseName(this.dropHover) || "/"}`)))
-        .when(!this.moving && !this.dropHover && Boolean(this.altHeld) && !this.on, el => el.child(div().text_size(11.5).text_color(t.dim).child("⌥ drag to move")))
+        .when(!this.moving && !this.dropHover && Boolean(this.altHeld), el => el.child(div().text_size(11.5).text_color(t.dim).child("⌥ drag to move")))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
       .when(!this.file, el => el.child(h_flex().id("files-hscroll").flex_1().min_h(0).min_w(0).overflow_x_scroll().child(v_flex().id("files-tree").flex_none().h_full().min_w_full().w(this.treeWidth(t)).overflow_y_scrollbar().p(6)
         .on_mouse_down("right", () => { if (this.root) this.openMenu({ path: this.root, dir: true, root: true }); })
