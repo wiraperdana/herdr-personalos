@@ -254,10 +254,16 @@ export default class Files extends View {
     });
   }
 
+  // Builds the rows once per render and measures them; treeRows hands back the same rows.
+  treeWidth(t) { this.widest = 0; this.rowsCache = this.rows("", 0, [], t); return Math.ceil(this.widest + 12); }
+  treeRows() { return this.rowsCache ?? []; }
+
   rows(prefix, depth, out, t) {
     if (out.length >= TOTAL || depth > 40) return out;
     for (const entry of this.entries.get(prefix) ?? []) {
       if (out.length >= TOTAL) break;
+      // Rough width of this row, so the tree can be wider than the panel and scroll sideways.
+      this.widest = Math.max(this.widest ?? 0, 8 + depth * 18 + 12 + 7 + 14 + 7 + entry.name.length * 8.5 + 40);
       const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path), mark = this.marks[`${this.root}/${path}`];
       out.push(h_flex().id(`file-${path}`).h(28).flex_none().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover(s => s.bg(t.hover))
         .drag_paths([`${this.root}/${path}`], { on: this.on ?? null })
@@ -281,9 +287,9 @@ export default class Files extends View {
         .when(Boolean(this.file), el => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted).on_click((_e, cx) => { this.show(null); cx.notify(); }).child("←")))
         .child(div().font_semibold().child("Files"))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
-      .when(!this.file, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_scrollbar().p(6).child(v_flex().flex_none().min_w_full().children(this.rows("", 0, [], t)))
+      .when(!this.file, el => el.child(h_flex().id("files-hscroll").flex_1().min_h(0).min_w(0).overflow_x_scroll().child(v_flex().id("files-tree").flex_none().h_full().min_w_full().w(this.treeWidth(t)).overflow_y_scrollbar().p(6).children(this.treeRows())
         .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "Loading files…" : this.root ? "No files" : "No folder"))))
-        .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total")))))
+        .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total"))))))
       .when(Boolean(this.file), el => el.child(this.code
         ? Editor.new(this.code).font_family(font.font_family).text_size(font.font_size).flex_1().min_h(0)
         : div().p(12).text_color(t.dim).child(this.fileError || "Loading file…")));

@@ -22,11 +22,14 @@ Herdr's default window with two changes for people who work from a file tree. Th
 - `layouts/PersonalOS.json` is a clone of `main` (Herdr 0.1.18). Inside the `work-body` row, the order of children is swapped from `[main, panel]` to `[panel, main]`. In the `panel-body` stack, the `files` block points at `mods/personalos-files` instead of the shipped `files` mod.
 - `mods/personalos-files` is a clone of the shipped `files` mod with one added line in `rows()`. Each row gets `.drag_paths([`${this.root}/${path}`], { on: this.on ?? null })`, placed before its `.on_click`. That makes the row a native drag source, and the path keeps the machine it lives on.
 - `mods/personalos-viewer` is a new mod that fills a tab. It reads `props().path` and `props().on`, loads the file with `readTextFile`, and shows it in a read-only `Editor` (files over 400,000 characters are cut). Files opens it with `run("tab.new", { name, mod: "personalos-viewer", props: { path, on } })`.
-- In `personalos-files`, the name is `flex_none().whitespace_nowrap()` instead of `truncate()`, the tree uses `overflow_scrollbar()` on both axes, and the rows sit in an inner `v_flex().flex_none().min_w_full()` so each row is as wide as the longest name.
+- In `personalos-files`, the name is `flex_none().whitespace_nowrap()` instead of `truncate()`. The tree is two scrollers. The outer `h_flex` uses `overflow_x_scroll()`, and the inner `v_flex` keeps the shipped `overflow_y_scrollbar()`. The inner one gets an explicit width `.w()` from the longest row (indent + icons + about 8.5px per character), with `min_w_full()` so short trees still fill the panel.
 - The other mods are shipped: `workspace-chrome`, `spaces`, `agents`, `tabs`, `changes`, `pane`, `workspace-status`.
 - Like the shipped `files` mod, it runs programs to list folders and read git status (`sh`, `git`, and `powershell` on Windows). It reads the folder of the focused terminal.
 
 ## Watch out
+
+- One scroller on both axes (`overflow_scrollbar()`) stopped updating its height when a folder opened. A vertical scroller does not grow to its content's width either, so it needs the explicit width.
+- The width is an estimate for a proportional font. Very wide names (many W or M) can lose a few pixels at the end.
 
 - Read props with `props()` from "herdr". The `props` argument to `init` stays empty for a mod opened by `tab.new`.
 
