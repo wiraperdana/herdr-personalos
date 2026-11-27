@@ -289,8 +289,14 @@ export default class Files extends View {
       const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path), mark = this.marks[`${this.root}/${path}`];
       this.widest = Math.max(this.widest ?? 0, 8 + depth * 18 + 12 + 7 + 14 + 7 + entry.name.length * this.charW + 10 + 7 + 16);
       out.push(h_flex().id(`file-${path}`).h(28).flex_none().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover(s => s.bg(t.hover))
-        .drag_paths([`${this.root}/${path}`], { on: this.on ?? null })
-        .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.open(path))
+        // Holding Option turns the native drag (paths into a terminal) off, so our own move-drag can run.
+        .when(!(this.altHeld || this.moving), el => el.drag_paths([`${this.root}/${path}`], { on: this.on ?? null }))
+        .when(Boolean(this.moving) && this.moveTarget === (entry.dir ? `${this.root}/${path}` : null), el => el.bg(t.hover).border_1().border_color(t.accent))
+        .when(this.moving?.src === `${this.root}/${path}`, el => el.opacity(0.5))
+        .on_mouse_down("left", (e, cx) => { if (e.modifiers.alt && !this.on) { cx.stop_propagation(); this.moving = { src: `${this.root}/${path}` }; this.moveTarget = null; cx.notify(); } })
+        .on_mouse_move((_e, cx) => { if (!this.moving) return; const target = entry.dir ? `${this.root}/${path}` : ops.parentOf(`${this.root}/${path}`); if (target !== this.moveTarget) { this.moveTarget = target; cx.notify(); } })
+        .on_mouse_up("left", (_e, cx) => { if (this.moving) { cx.stop_propagation(); this.finishMove(entry.dir ? `${this.root}/${path}` : ops.parentOf(`${this.root}/${path}`), cx); } })
+        .on_click((e, cx) => { if (e.modifiers.alt) return; entry.dir ? this.toggle(path, cx) : this.open(path); })
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.openMenu({ path: `${this.root}/${path}`, dir: entry.dir }); })
         .on_drop((e, cx) => { cx.stop_propagation(); this.dropInto(entry.dir ? `${this.root}/${path}` : ops.parentOf(`${this.root}/${path}`), e.paths); })
         // Git mark first, in a fixed slot, so it stays visible however far the tree scrolls sideways.
@@ -409,6 +415,19 @@ export default class Files extends View {
     emit(null);
   }
 
+  // Option-drag inside the tree: Herdr only delivers on_drop for drags from outside the app,
+  // so a move within the tree is tracked with plain mouse events instead.
+  async finishMove(dir, cx) {
+    const src = this.moving?.src;
+    this.moving = null; this.moveTarget = null; cx.notify();
+    if (!src || ops.parentOf(src) === dir) return;
+    const r = await ops.paste(src, dir, { cut: true });
+    if (!r.ok) return fail(`Couldn't move ${ops.baseName(src)}`, r.error);
+    const clip = shared(CLIP);
+    if (clip && ops.isInside(clip.path, src)) setShared(CLIP, null);
+    emit(dir);
+  }
+
   // Drops: from inside this folder a drop moves (like VS Code); from Finder it copies.
   async dropInto(dir, paths) {
     if (this.on) return fail("Drop not supported", "Dragging files works only on this Mac's folders.");
@@ -481,9 +500,18 @@ export default class Files extends View {
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .when(Boolean(this.file), el => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted).on_click((_e, cx) => { this.show(null); cx.notify(); }).child("←")))
         .child(div().font_semibold().child("Files"))
+        .when(Boolean(this.moving), el => el.child(div().text_size(11.5).text_color(t.accent).child(`Moving ${ops.baseName(this.moving.src)}${this.moveTarget ? " → " + (ops.baseName(this.moveTarget) || "/") : ""}`)))
+        .when(!this.moving && Boolean(this.altHeld) && !this.on, el => el.child(div().text_size(11.5).text_color(t.dim).child("⌥ drag to move")))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
       .when(!this.file, el => el.child(h_flex().id("files-hscroll").flex_1().min_h(0).min_w(0).overflow_x_scroll().child(v_flex().id("files-tree").flex_none().h_full().min_w_full().w(this.treeWidth(t)).overflow_y_scrollbar().p(6)
         .on_mouse_down("right", () => { if (this.root) this.openMenu({ path: this.root, dir: true, root: true }); })
+        .on_mouse_move((e, cx) => {
+          const alt = Boolean(e.modifiers?.alt);
+          if (alt !== Boolean(this.altHeld)) { this.altHeld = alt; cx.notify(); }
+          // The button came up outside a row (or outside the panel): cancel.
+          if (this.moving && !e.pressed_button) { this.moving = null; this.moveTarget = null; cx.notify(); }
+        })
+        .on_mouse_up("left", (_e, cx) => { if (this.moving && this.root) this.finishMove(this.root, cx); })
         .on_drop((e, cx) => { cx.stop_propagation(); if (this.root) this.dropInto(this.root, e.paths); })
         .children(this.treeRows())
         .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "Loading files…" : this.root ? "No files" : "No folder"))))
