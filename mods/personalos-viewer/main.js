@@ -77,6 +77,7 @@ export default class Viewer extends View {
   // Edit is a writable editor over `value`; it is never remembered as the file type's mode.
   startEdit(value, cx) {
     if (!this.actions?.edit || this.mode === "edit") return;
+    if (this.banner?.kind === "draft" && value !== shared(DRAFTS_KEY)?.[this.draftKey()]?.text) return;   // restore or discard the draft first
     const t = theme();
     this.editCode?.release();
     this.editCode = EditorState.new({ language: LANG[this.ext] ?? (this.ext || "txt"), value: value ?? "",
@@ -100,12 +101,15 @@ export default class Viewer extends View {
     const text = this.editCode.value();
     try {
       await this.write(this.path, text, this.original);
-    } catch {
+    } catch (e) {
+      // Only a real outside change is a conflict. Any other failure keeps the editor and the draft.
       let now = null;
       try { now = await readTextFile(this.path, { on: this.on }); } catch {}
-      this.banner = { kind: now === null ? "gone" : "conflict" };
+      if (now === null) this.banner = { kind: "gone" };
+      else if (now !== this.original) this.banner = { kind: "conflict" };
+      else this.banner = { kind: "error", reason: String(e?.message ?? e ?? "") };
       cx?.notify();
-      return "conflict";
+      return now !== null && now === this.original ? "error" : "conflict";
     }
     this.text = this.original = text; this.banner = null;
     this.buildCode(); this.setDirty(false); this.dropDraft();
@@ -311,7 +315,7 @@ export default class Viewer extends View {
         .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(shown))
         .when(Boolean(this.actions?.raw && this.actions?.render), el => el.child(this.segment(t)))
         .when(Boolean(this.on && this.group <= 3 && this.remoteWritable === false), el => el.child(div().text_size(11).text_color(t.dim).child("Read-only: this machine can't save remotely")))
-        .when(Boolean(this.actions?.edit && this.mode !== "edit"), el => el.child(div().id("viewer-edit").px(10).py(3).rounded(7).border_1().border_color(t.border)
+        .when(Boolean(this.actions?.edit && this.mode !== "edit" && this.banner?.kind !== "draft"), el => el.child(div().id("viewer-edit").px(10).py(3).rounded(7).border_1().border_color(t.border)
           .cursor_pointer().text_color(t.muted).hover(s => s.bg(t.hover)).on_click((_e, cx) => this.startEdit(this.text, cx)).child("✎ Edit")))
         .when(this.mode === "edit", el => el
           .child(div().id("viewer-save").px(10).py(3).rounded(7).cursor_pointer().bg(this.dirty ? t.accent : t.hover).text_color(this.dirty ? t.background : t.muted)
@@ -330,11 +334,13 @@ export default class Viewer extends View {
       .hover(s => s.bg(t.hover)).on_click((_e, cx) => fn(cx)).child(label);
     const msg = b.kind === "conflict" ? "This file changed on disk since you opened it."
       : b.kind === "gone" ? "This file is no longer available."
+      : b.kind === "error" ? `Could not save this file${b.reason === "unsupported" ? ": this machine can't save remotely" : b.reason && b.reason !== "error" ? `: ${b.reason}` : ""}. Your edits are still here.`
       : `You have unsaved changes to this file from ${new Date(b.at).toLocaleString()}.`;
     return h_flex().flex_none().px(12).py(8).gap(8).items_center().bg(t.hover).border_b(1).border_color(t.border).text_size(12)
       .child(div().flex_1().child(msg))
       .when(b.kind === "conflict", el => el.child(btn("b-reload", "Reload", cx => this.reload(cx))))
-      .when(b.kind !== "draft", el => el.child(btn("b-conflict", "Save as conflict file", cx => this.saveAsConflict(cx))))
+      .when(b.kind === "error", el => el.child(btn("b-dismiss", "Dismiss", cx => { this.banner = null; cx.notify(); })))
+      .when(b.kind === "conflict" || b.kind === "gone", el => el.child(btn("b-conflict", "Save as conflict file", cx => this.saveAsConflict(cx))))
       .when(b.kind === "draft", el => el.child(btn("b-restore", "Restore", cx => this.restoreDraft(cx)))
         .child(btn("b-drop", "Discard", cx => { this.dropDraft(); this.banner = null; cx.notify(); })));
   }

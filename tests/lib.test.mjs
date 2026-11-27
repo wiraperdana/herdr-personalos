@@ -110,3 +110,31 @@ test("remoteScripts write, refuse a changed target, and handle odd names", () =>
   sh(s.append, tmp, lib.utf8ToBase64("x"));
   assert.equal(sh(s.cleanup, tmp), 0);
 });
+
+import { chmodSync, statSync, symlinkSync, lstatSync, existsSync } from "node:fs";
+
+test("remote commit keeps the target's mode and writes through a symlink", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rs2-"));
+  const real = join(dir, "run.sh"), link = join(dir, "link.sh"), tmp = join(dir, ".t");
+  writeFileSync(real, "old\n"); chmodSync(real, 0o755); symlinkSync(real, link);
+  const s = lib.remoteScripts();
+  const out = execFileSync("sh", ["-c", s.resolve, "sh", link]).toString();
+  assert.ok(out.endsWith("/run.sh"));
+  writeFileSync(tmp, "new\n");
+  execFileSync("sh", ["-c", s.commit, "sh", tmp, out]);
+  assert.equal(statSync(real).mode & 0o777, 0o755);
+  assert.ok(lstatSync(link).isSymbolicLink());
+  assert.equal(readFileSync(link, "utf8"), "new\n");
+});
+
+test("remote commitNew refuses an existing file", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rs3-"));
+  const target = join(dir, "n.conflict.md"), tmp = join(dir, ".t");
+  writeFileSync(target, "keep\n"); writeFileSync(tmp, "mine\n");
+  const s = lib.remoteScripts();
+  let code = 0;
+  try { execFileSync("sh", ["-c", s.commitNew, "sh", tmp, target]); } catch (e) { code = e.status; }
+  assert.equal(code, 4);
+  assert.equal(readFileSync(target, "utf8"), "keep\n");
+  assert.equal(existsSync(tmp), false);
+});

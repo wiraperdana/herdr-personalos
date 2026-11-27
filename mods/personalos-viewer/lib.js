@@ -105,7 +105,12 @@ export function remoteScripts() {
     probe: 'command -v base64 >/dev/null 2>&1 && { command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1; }',
     append: 'printf "%s" "$2" | base64 -d >> "$1"',
     check: `[ -e "$1" ] || exit 2; ${hash}; [ "$h" = "$2" ]`,
-    commit: 'mv -f "$1" "$2"',
+    // The real file behind a symlink, so a save writes through the link instead of replacing it.
+    resolve: 'p=$(readlink -f "$1" 2>/dev/null) || p=$(realpath "$1" 2>/dev/null) || p="$1"; printf "%s" "$p"',
+    // Keep the target's permission bits (an executable script stays executable), then replace it.
+    commit: 'm=$(stat -c %a "$2" 2>/dev/null || stat -f %Lp "$2" 2>/dev/null) && chmod "$m" "$1"; mv -f "$1" "$2"',
+    // A new file (a conflict copy) never replaces an existing one.
+    commitNew: 'if [ -e "$2" ]; then rm -f "$1"; exit 4; fi; mv "$1" "$2"',
     cleanup: 'rm -f "$1"',
   };
 }
