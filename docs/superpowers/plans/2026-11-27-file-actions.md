@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Source of truth: `~/.config/herdr-app/mods/personalos-viewer/` (`$MOD`). Copy to the repo's `mods/personalos-viewer/` only after `herdr-app check $MOD` passes.
-- Tests import the repo copy, so copy `$MOD/lib.js` into the repo's `mods/personalos-viewer/` before every `node --test tests/` run.
+- Tests import the repo copy, so copy `$MOD/lib.js` into the repo's `mods/personalos-viewer/` before every `node --test tests/*.test.mjs` run.
 - Read props with `props()` from "herdr", never from `init`'s argument.
 - Display limit: 400,000 characters. Over it, the file is read-only and Edit is hidden.
 - Shortcuts: ⌘E Edit, ⌘R toggles Raw/Render, ⌘S Save, ⌘O Open in default app, in a `mod:personalos-viewer` section of `keys.json`, merged and never replacing keys.
@@ -44,7 +44,7 @@
 
 - [ ] **Step 1:** In `$MOD/lib.js`, export `export const LIB_OK = true;`. In `main.js`, add `import { LIB_OK } from "./lib.js";` and render nothing different.
 - [ ] **Step 2:** Run `herdr-app check $MOD`, then open a file in the app. If both pass, sibling imports work. If not, revert the import, and from here on keep `lib.js` as the tested source and paste its body into a `// ---- lib (generated from lib.js) ----` section of `main.js` with each change.
-- [ ] **Step 3:** Write `tests/lib.test.mjs` importing `../mods/personalos-viewer/lib.js` (the repo copy) with a smoke test `LIB_OK === true`. Run `node --test tests/`. Expected: 1 pass.
+- [ ] **Step 3:** Write `tests/lib.test.mjs` importing `../mods/personalos-viewer/lib.js` (the repo copy) with a smoke test `LIB_OK === true`. Run `node --test tests/*.test.mjs`. Expected: 1 pass.
 - [ ] **Step 4:** Commit: "Viewer: pure logic module and Node tests".
 
 ### Task 2: File groups, actions and naming (pure)
@@ -67,9 +67,9 @@
   - `pickMode("render", actionsFor(3,...))==="raw"`, `pickMode(undefined, actionsFor(1,...))==="render"`, `pickMode("raw", actionsFor(5,...))==="card"`.
   - `conflictName("notes.md", n=>false)==="notes.conflict.md"`, `conflictName("notes.md", n=>n==="notes.conflict.md")==="notes.conflict-2.md"`, `conflictName("Makefile",()=>false)==="Makefile.conflict"`.
   - `quoteSh("a b'c$")===` `'a b'\''c$'`.
-- [ ] **Step 2:** Run `node --test tests/`. Expected: FAIL (not defined).
+- [ ] **Step 2:** Run `node --test tests/*.test.mjs`. Expected: FAIL (not defined).
 - [ ] **Step 3:** Implement them in `lib.js`. Group 4 is png, jpg, jpeg, gif, webp and bmp. Task 4 may move gif and webp to group 5 if `image()` cannot render them. Unknown extensions use `sample`: a NUL means 5, otherwise 3.
-- [ ] **Step 4:** Run `node --test tests/`. Expected: all pass.
+- [ ] **Step 4:** Run `node --test tests/*.test.mjs`. Expected: all pass.
 - [ ] **Step 5:** Commit: "Viewer: file groups, actions and conflict names".
 
 ### Task 3: Toolbar, modes and per-extension memory
@@ -125,17 +125,17 @@
   - In `remote-save.js`: `saveRemote(path: string, on: string, text: string, original: string): Promise<"saved"|"conflict"|"unsupported"|"error">`.
 
 - [ ] **Step 1: Failing tests.** Joining `chunkBase64` chunks and decoding them gives the original, including emoji and Indonesian text. Every chunk is at most 65536 characters. `remoteScripts` scripts contain no file name text, only `"$1"` and similar references. Run the scripts locally with `sh -c script sh <args>` on a temp dir: append plus commit writes the exact text. `check` exits 1 when the target hash differs from the hash passed in. This works with a target named `a b'$.md`.
-- [ ] **Step 2:** Run `node --test tests/`. Expected: FAIL.
+- [ ] **Step 2:** Run `node --test tests/*.test.mjs`. Expected: FAIL.
 - [ ] **Step 3:** Implement. `check` picks `sha256sum`, or else `shasum -a 256`, at run time, and `saveRemote` hashes `original` locally to compare. If `sh`, `base64` or a hash tool is missing, return "unsupported", and the toolbar shows "Read-only: this machine can't save remotely".
 - [ ] **Step 4:** Wire it in: `Viewer.save` calls `saveRemote` when `on` is set. "conflict" uses the Task 5 banner, where Save as conflict file goes through `saveRemote(conflictPath, on, text, null)` (with `original` null, skip the check).
 - [ ] **Step 5: Verify on a real remote machine** (any machine in `hc machine ls`). Do a normal save, then do a save after `echo x >> file` on that machine. Expected: saved, then the conflict banner.
-- [ ] **Step 6:** Run `node --test tests/`, then commit: "Viewer: editable remote text files".
+- [ ] **Step 6:** Run `node --test tests/*.test.mjs`, then commit: "Viewer: editable remote text files".
 
 ### Task 7: Recipe, README and repo sync
 
 **Files:** Modify the repo's `RECIPE.md` and `README.md`, and copy `$MOD/*` (without `gpui-kit.d.ts` and `jsconfig.json`) into `mods/personalos-viewer/`.
 
 - [ ] **Step 1:** In `RECIPE.md`, "What you see" gets the toolbar and the card. "How it behaves" gets the modes and per-extension memory, saving, conflicts, drafts and shortcuts. "Built from" gets the file groups, the APIs and the four remote steps. "Watch out" gets the × hook gap, the race window, the 64 KB chunks, Windows read-only and the props note. "Done when" gets the spec's list.
-- [ ] **Step 2:** In `README.md`, the install merges `mods/personalos-viewer/keys.json` into `keys.json`, and lists `node --test tests/`.
+- [ ] **Step 2:** In `README.md`, the install merges `mods/personalos-viewer/keys.json` into `keys.json`, and lists `node --test tests/*.test.mjs`.
 - [ ] **Step 3:** `herdr-app check` passes for both mods. Drag-to-terminal and sideways scrolling in Files still work.
 - [ ] **Step 4:** Commit: "Viewer: recipe and README for file actions". No push. K-261127-03 is still open.

@@ -255,7 +255,10 @@ export default class Files extends View {
   }
 
   // Builds the rows once per render and measures them; treeRows hands back the same rows.
-  treeWidth(t) { this.widest = 0; this.rowsCache = this.rows("", 0, [], t); return Math.ceil(this.widest + 12); }
+  treeWidth(t) {
+    // No text measuring in gpui-kit: about 0.48 em per character in the UI font (measured on long names), plus a little slack per row.
+    this.charW = 0.48 * (Number(settings()?.ui_font_size) || 13);
+    this.widest = 0; this.rowsCache = this.rows("", 0, [], t); return Math.ceil(this.widest + 12); }
   treeRows() { return this.rowsCache ?? []; }
 
   rows(prefix, depth, out, t) {
@@ -263,15 +266,16 @@ export default class Files extends View {
     for (const entry of this.entries.get(prefix) ?? []) {
       if (out.length >= TOTAL) break;
       // Rough width of this row, so the tree can be wider than the panel and scroll sideways.
-      this.widest = Math.max(this.widest ?? 0, 8 + depth * 18 + 12 + 7 + 14 + 7 + entry.name.length * 8.5 + 40);
       const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path), mark = this.marks[`${this.root}/${path}`];
+      this.widest = Math.max(this.widest ?? 0, 8 + depth * 18 + 12 + 7 + 14 + 7 + entry.name.length * this.charW + 10 + 7 + 16);
       out.push(h_flex().id(`file-${path}`).h(28).flex_none().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover(s => s.bg(t.hover))
         .drag_paths([`${this.root}/${path}`], { on: this.on ?? null })
         .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.open(path))
+        // Git mark first, in a fixed slot, so it stays visible however far the tree scrolls sideways.
+        .child(div().w(10).flex_none().text_size(11).text_color(mark === "A" ? t.ansi2 : mark === "D" || mark === "U" ? t.ansi1 : t.blocked).child(mark ?? ""))
         .child(entry.dir ? svg(`mods/personalos-files/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim) : div().w(12).flex_none())
         .child(svg(`mods/personalos-files/${entry.dir ? "folder" : "file"}.svg`).size(14).flex_none().text_color(t.muted))
-        .child(div().flex_none().whitespace_nowrap().child(entry.name)).child(div().flex_1().min_w(8))
-        .when(Boolean(mark), el => el.child(div().text_size(11).text_color(mark === "A" ? t.ansi2 : mark === "D" || mark === "U" ? t.ansi1 : t.blocked).child(mark))));
+        .child(div().flex_none().whitespace_nowrap().child(entry.name)));
       if (entry.dir && open) this.rows(path, depth + 1, out, t);
     }
     return out;
