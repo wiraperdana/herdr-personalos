@@ -9,8 +9,8 @@ import { groupOf, actionsFor, pickMode, extOf, cacheName, conflictName } from ".
 
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
 const LIMIT = 400000;
-const MODES_KEY = "personalos-viewer.modes";
-const DRAFTS_KEY = "personalos-viewer.drafts";
+const MODES_KEY = "file-viewer.modes";
+const DRAFTS_KEY = "file-viewer.drafts";
 
 function middle(s, max = 90) {
   return s.length <= max ? s : s.slice(0, max / 2 - 1) + "…" + s.slice(-(max / 2 - 1));
@@ -59,7 +59,7 @@ export default class Viewer extends View {
 
   askClose(_cx) {
     if (!this.dirty) { run("tab.close"); return; }
-    openOverlay({ mod: "personalos-viewer", kind: "dialog", width: 380, modal: true,
+    openOverlay({ mod: "file-viewer", kind: "dialog", width: 380, modal: true,
       props: { confirm: true, name: this.name, items: [["Save", "close-save", "⌘S"], ["Discard changes", "close-discard", ""], ["Cancel", "", "esc"]] } });
   }
 
@@ -181,7 +181,7 @@ export default class Viewer extends View {
   }
 
   openMenu() {
-    openOverlay({ mod: "personalos-viewer", kind: "popup", width: 220, props: { menu: true, items: this.menuItems() } });
+    openOverlay({ mod: "file-viewer", kind: "popup", width: 220, props: { menu: true, items: this.menuItems() } });
   }
 
   load(cx) {
@@ -224,13 +224,13 @@ export default class Viewer extends View {
 
   // image() only loads paths inside the app folder, so link the file there and read its size.
   loadImage(cx) {
-    const dir = `${appHome()}/data/personalos-viewer/images`, name = cacheName(this.path);
+    const dir = `${appHome()}/data/file-viewer/images`, name = cacheName(this.path);
     cx.spawn(async cx => {
       try {
         const r = await exec("sh", ["-c", 'mkdir -p "$1" && ln -sf "$2" "$1/$3" && sips -g pixelWidth -g pixelHeight "$2"', "sh", dir, this.path, name]);
         const w = Number(/pixelWidth: (\d+)/.exec(r.stdout)?.[1]), h = Number(/pixelHeight: (\d+)/.exec(r.stdout)?.[1]);
         if (r.code !== 0 || !w || !h) throw new Error("no size");
-        this.img = { rel: `data/personalos-viewer/images/${name}`, w, h };
+        this.img = { rel: `data/file-viewer/images/${name}`, w, h };
       } catch { this.img = null; this.mode = "card"; this.loadSize(cx); }
       cx.notify();
     });
@@ -312,7 +312,7 @@ export default class Viewer extends View {
 
   renderMenu(t) {
     const items = this.menu.items ?? [];
-    const choose = i => { closeOverlay(this.menu.overlay); if (items[i][1]) run(`personalos-viewer.${items[i][1]}`); };
+    const choose = i => { closeOverlay(this.menu.overlay); if (items[i][1]) run(`file-viewer.${items[i][1]}`); };
     return v_flex().id("viewer-menu").track_focus(this.handle).w_full().p(5).bg(t.popover).text_size(12.8)
       .on_key_down((e, cx) => {
         if (e.key === "down") this.at = (this.at + 1) % items.length;

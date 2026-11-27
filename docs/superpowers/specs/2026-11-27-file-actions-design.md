@@ -4,7 +4,7 @@ Date: 2026-11-27. Owner: Wira Perdana. Status: approved by Wira on 2026-11-27, a
 
 ## Intent
 
-Clicking a file in the PersonalOS Files panel already opens it in its own tab (`mods/personalos-viewer`), read-only, as raw text. Wira works with every kind of file there: md, pdf, html, docx, xlsx, pptx, png, jpg, and more. One raw view is not enough. He wants each file to offer the actions that make sense for it. The actions are: **see raw**, **see rendered**, **edit** (for anything that has a raw view), and **open in the OS default app**.
+Clicking a file in the PersonalOS Files panel already opens it in its own tab (`mods/file-viewer`), read-only, as raw text. Wira works with every kind of file there: md, pdf, html, docx, xlsx, pptx, png, jpg, and more. One raw view is not enough. He wants each file to offer the actions that make sense for it. The actions are: **see raw**, **see rendered**, **edit** (for anything that has a raw view), and **open in the OS default app**.
 
 Why it matters: the Files panel should be the one place he starts from. Today a pdf or docx shows "Binary file", and a markdown file shows only its source. That sends him back to Finder.
 
@@ -60,14 +60,14 @@ Switching tabs keeps the tab alive, so it needs no prompt.
 **Accepted risk.** A write by someone else in the milliseconds between steps 3 and 4 would be overwritten. Wira accepted this risk. The local path has no such gap, because `writeTextFile` checks and writes in one step. Remote saves of large files are slower, because they go in chunks. Remote machines without `sh`, `base64` and a SHA-256 tool (for example Windows) stay read-only, with a note in the toolbar.
 
 **It ships with the repo (Wira's request).** The remote save is part of the shared layout, not a local patch. It must:
-- live inside `mods/personalos-viewer/`, as its own module (`remote-save.js`) if gpui-kit loads relative imports, otherwise as one clearly marked section of `main.js` with a single entry function such as `saveRemote(path, on, text, original)`;
+- live inside `mods/file-viewer/`, as its own module (`remote-save.js`) if gpui-kit loads relative imports, otherwise as one clearly marked section of `main.js` with a single entry function such as `saveRemote(path, on, text, original)`;
 - hold nothing specific to Wira's setup: no machine names, hosts, home paths or user names. It takes the machine from the file's `on` and finds the hash tool at run time;
 - be described in `RECIPE.md`: the four steps in "Built from", and the accepted race window, the 64 KB chunks and the Windows limit in "Watch out". A fresh build from the recipe alone must reproduce it;
 - be tested on a real remote machine before it is pushed. One test proves a normal save, and one proves the refusal after an outside change.
 
 **Open in default app** runs `open <path>` (macOS) through `exec`. Show in Finder runs `open -R <path>`. Both are local-only.
 
-**Shortcuts** go in a `mod:personalos-viewer` section of `keys.json`, delivered to the mod's `nextCommand()`. ⌘E, ⌘R, ⌘S and ⌘O are not bound in Wira's current `keys.json`. A mod's keys must be merged into the person's file, never replacing their keys.
+**Shortcuts** go in a `mod:file-viewer` section of `keys.json`, delivered to the mod's `nextCommand()`. ⌘E, ⌘R, ⌘S and ⌘O are not bound in Wira's current `keys.json`. A mod's keys must be merged into the person's file, never replacing their keys.
 
 ## Non-goals
 
@@ -95,7 +95,7 @@ Switching tabs keeps the tab alive, so it needs no prompt.
 
 - **Edit is never the remembered mode.** Only Raw or Render is remembered per extension. A file always opens read-only, so a writable buffer never appears unasked.
 - **Files on another machine (`on` set)**: see "Remote text files" under Behaviour (Wira's decision K-261127-05). Open in default app and Show in Finder stay hidden for them, because the app would run on the Mac while the file lives elsewhere. Group 5's card for a remote file shows its info and says it lives on that machine. Images render only if `image()` can reach the path, otherwise they get the card.
-- **Shortcuts live in a `mod:personalos-viewer` section**, which Herdr applies only while that mod has focus. In terminal tabs, ⌘S, ⌘R, ⌘E and ⌘O keep their current behaviour. The builder verifies this scoping first, and stops to ask if Herdr applies `mod:` keys app-wide.
+- **Shortcuts live in a `mod:file-viewer` section**, which Herdr applies only while that mod has focus. In terminal tabs, ⌘S, ⌘R, ⌘E and ⌘O keep their current behaviour. The builder verifies this scoping first, and stops to ask if Herdr applies `mod:` keys app-wide.
 
 ## Left to the builder
 

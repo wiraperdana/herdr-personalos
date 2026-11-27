@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { copyName, validName, parentOf, joinPath, isInside, pasteTarget } from "../mods/personalos-files/paths.js";
+import { copyName, validName, parentOf, joinPath, isInside, pasteTarget } from "../mods/file-explorer/paths.js";
 
 test("copyName adds ' copy', then ' copy 2', keeping the extension", () => {
   assert.equal(copyName("notes.md", []), "notes copy.md");

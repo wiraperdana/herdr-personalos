@@ -6,7 +6,7 @@ import * as ops from "./ops.js";
 
 // The context menu, the name dialog and the delete dialog are popup copies of this mod.
 // They do the file work themselves, then post EVENT so the panel reloads (and opens `open`).
-const CLIP = "personalos-files.clipboard", EVENT = "personalos-files.changed";
+const CLIP = "file-explorer.clipboard", EVENT = "file-explorer.changed";
 const emit = open => setShared(EVENT, { seq: `${Date.now()}-${Math.random()}`, open: open ?? null });
 const fail = (title, error) => notify({ title, body: error, level: "error" });
 
@@ -252,7 +252,7 @@ export default class Files extends View {
 
   // Opens a file in its own tab, as large as a terminal.
   open(path) {
-    run("tab.new", { name: path.split("/").pop(), mod: "personalos-viewer", props: { path: `${this.root}/${path}`, on: this.on ?? null } });
+    run("tab.new", { name: path.split("/").pop(), mod: "file-viewer", props: { path: `${this.root}/${path}`, on: this.on ?? null } });
   }
 
   show(path, cx) {
@@ -295,8 +295,8 @@ export default class Files extends View {
         .on_drop((e, cx) => { cx.stop_propagation(); this.dropInto(entry.dir ? `${this.root}/${path}` : ops.parentOf(`${this.root}/${path}`), e.paths); })
         // Git mark first, in a fixed slot, so it stays visible however far the tree scrolls sideways.
         .child(div().w(10).flex_none().text_size(11).text_color(mark === "A" ? t.ansi2 : mark === "D" || mark === "U" ? t.ansi1 : t.blocked).child(mark ?? ""))
-        .child(entry.dir ? svg(`mods/personalos-files/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim) : div().w(12).flex_none())
-        .child(svg(`mods/personalos-files/${entry.dir ? "folder" : "file"}.svg`).size(14).flex_none().text_color(t.muted))
+        .child(entry.dir ? svg(`mods/file-explorer/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim) : div().w(12).flex_none())
+        .child(svg(`mods/file-explorer/${entry.dir ? "folder" : "file"}.svg`).size(14).flex_none().text_color(t.muted))
         .child(div().flex_none().whitespace_nowrap().child(entry.name)));
       if (entry.dir && open) this.rows(path, depth + 1, out, t);
     }
@@ -330,7 +330,7 @@ export default class Files extends View {
     ].filter(x => x !== false);
     // Drop separators at the ends and doubled ones.
     const tidy = items.filter((x, i, a) => x || (i > 0 && i < a.length - 1 && a[i - 1]));
-    openOverlay({ mod: "personalos-files", kind: "popup", width: 240, props: { menu: true, entry, on: this.on ?? null, root: this.root, items: tidy } });
+    openOverlay({ mod: "file-explorer", kind: "popup", width: 240, props: { menu: true, entry, on: this.on ?? null, root: this.root, items: tidy } });
   }
 
   initPopup(p, cx) {
@@ -354,11 +354,11 @@ export default class Files extends View {
   // Runs one menu choice. Called on the popup copy, which carries entry, on and root in its props.
   async act(a, cx) {
     const { entry, on, root } = this.popup, path = entry.path, dir = entry.dir ? path : ops.parentOf(path);
-    const dialog = extra => openOverlay({ mod: "personalos-files", kind: "dialog", width: 380, modal: true, props: { entry, on, root, ...extra } });
+    const dialog = extra => openOverlay({ mod: "file-explorer", kind: "dialog", width: 380, modal: true, props: { entry, on, root, ...extra } });
     // Slow work finishes before the popup closes: closing it ends this copy and its pending tasks.
     if (a === "duplicate" || a === "paste" || a === "delete") { if (this.busy) return; this.busy = true; cx.notify(); }
     else this.dismiss();
-    if (a === "open") run("tab.new", { name: ops.baseName(path), mod: "personalos-viewer", props: { path, on } });
+    if (a === "open") run("tab.new", { name: ops.baseName(path), mod: "file-viewer", props: { path, on } });
     else if (a === "openApp") exec("open", [path]).catch(() => {});
     else if (a === "reveal") exec("open", entry.root ? [path] : ["-R", path]).catch(() => {});
     else if (a === "terminal") run("tab.new", { folder: path, name: ops.baseName(path) });
@@ -393,7 +393,7 @@ export default class Files extends View {
     if (!r.ok) { this.err = r.error; cx.notify(); return; }
     this.dismiss();
     emit(ask === "newFolder" ? target : dir);
-    if (ask === "newFile") run("tab.new", { name, mod: "personalos-viewer", props: { path: target, on } });
+    if (ask === "newFile") run("tab.new", { name, mod: "file-viewer", props: { path: target, on } });
   }
 
   async confirmDelete(cx) {
