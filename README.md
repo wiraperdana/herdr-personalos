@@ -2,6 +2,8 @@
 
 A [Herdr](https://herdr.dev) layout: the Files panel on the left, and drag a file or folder from Files into a terminal to type its path. Click a file to open it in its own tab: raw, rendered (Markdown, HTML, images), editable with safe saves (also on remote machines), or in the macOS default app. Right-click a file or folder for a VS Code style menu: new file and folder, cut, copy, paste, duplicate, copy path, rename, and delete to the Trash. Hold ⌥ and drag a row onto a folder to move it, or drop files from Finder to copy them in.
 
+The two mods are also shared on their own, for people who want them in their current layout: [herdr-file-viewer](https://github.com/wiraperdana/herdr-file-viewer) and [herdr-file-explorer](https://github.com/wiraperdana/herdr-file-explorer). This layout is the one-step way to get both, arranged as shown.
+
 ## Install
 
 Copy the files into your Herdr home, then switch to the layout:

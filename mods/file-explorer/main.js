@@ -1,13 +1,19 @@
 // A lazy file browser for the focused pane's folder, with bounded read-only previews.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, InputState, Input } from "gpui-base";
-import { spaces, panes, focused, run, exec, readTextFile, watchFolder, theme, settings, window, props, shared, setShared, openOverlay, closeOverlay, notify } from "herdr";
+import { spaces, panes, focused, run, exec, readTextFile, watchFolder, theme, settings, window, props, shared, setShared, openOverlay, closeOverlay, notify, appHome } from "herdr";
 import * as ops from "./ops.js";
 
 // The context menu, the name dialog and the delete dialog are popup copies of this mod.
 // They do the file work themselves, then post EVENT so the panel reloads (and opens `open`).
 const CLIP = "file-explorer.clipboard", EVENT = "file-explorer.changed";
-const emit = open => setShared(EVENT, { seq: `${Date.now()}-${Math.random()}`, open: open ?? null });
+const emit = (open, show) => setShared(EVENT, { seq: `${Date.now()}-${Math.random()}`, open: open ?? null, show: show ?? null });
+// Copies of this mod share one script VM, so the panel's check reaches the popups too.
+const viewer = globalThis[Symbol.for("file-explorer.viewer")] ??= { installed: true };
+// Opens a file in a file-viewer tab, or (without that mod) asks the panel to show its built-in preview.
+const openFile = (path, on) => viewer.installed
+  ? run("tab.new", { name: path.split("/").pop(), mod: "file-viewer", props: { path, on: on ?? null } })
+  : emit(null, path);
 const fail = (title, error) => notify({ title, body: error, level: "error" });
 
 // The panels share data in one VM, but their host tasks belong to separate copies.
@@ -94,6 +100,8 @@ export default class Files extends View {
     const p = props() ?? {};
     if (p.menu || p.ask || p.confirm) return this.initPopup(p, cx);
     this.lastEvent = shared(EVENT)?.seq;
+    // Files open in the file-viewer mod when it is installed; without it, in the built-in preview.
+    cx.spawn(async () => { try { viewer.installed = (await exec("test", ["-f", `${appHome()}/mods/file-viewer/main.js`])).code === 0; } catch {} });
     this.saved = new Map();
     this.entries = new Map(); this.folders = new Set(); this.pending = new Set(); this.marks = {};
     this.refresh(cx);
@@ -107,6 +115,7 @@ export default class Files extends View {
     if (ev && ev.seq !== this.lastEvent) {
       this.lastEvent = ev.seq;
       if (context) context.catchUp = true;
+      if (ev.show && this.root && ops.isInside(ev.show, this.root)) this.show(ev.show.slice(this.root.length + 1), cx);
       // Open every folder down to the one that changed, so a new or pasted item is in view.
       if (ev.open && this.root && ops.isInside(ev.open, this.root) && ev.open !== this.root) {
         const parts = ev.open.slice(this.root.length + 1).split("/");
@@ -252,8 +261,9 @@ export default class Files extends View {
   }
 
   // Opens a file in its own tab, as large as a terminal.
-  open(path) {
-    run("tab.new", { name: path.split("/").pop(), mod: "file-viewer", props: { path: `${this.root}/${path}`, on: this.on ?? null } });
+  open(path, cx) {
+    if (!viewer.installed) return this.show(path, cx);
+    openFile(`${this.root}/${path}`, this.on);
   }
 
   show(path, cx) {
@@ -305,7 +315,7 @@ export default class Files extends View {
           }
           if (!this.moving) return; const target = entry.dir ? `${this.root}/${path}` : ops.parentOf(`${this.root}/${path}`); if (target !== this.moveTarget) { this.moveTarget = target; cx.notify(); } })
         .on_mouse_up("left", (_e, cx) => { this.pressing = false; if (this.moving) { cx.stop_propagation(); this.finishMove(entry.dir ? `${this.root}/${path}` : ops.parentOf(`${this.root}/${path}`), cx); } })
-        .on_click((e, cx) => { if (e.modifiers.alt) return; entry.dir ? this.toggle(path, cx) : this.open(path); })
+        .on_click((e, cx) => { if (e.modifiers.alt) return; entry.dir ? this.toggle(path, cx) : this.open(path, cx); })
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.openMenu({ path: `${this.root}/${path}`, dir: entry.dir }); })
         .on_drop((e, cx) => { cx.stop_propagation(); this.dropInto(entry.dir ? `${this.root}/${path}` : ops.parentOf(`${this.root}/${path}`), e.paths); })
         // Git mark first, in a fixed slot, so it stays visible however far the tree scrolls sideways.
@@ -373,7 +383,7 @@ export default class Files extends View {
     // Slow work finishes before the popup closes: closing it ends this copy and its pending tasks.
     if (a === "duplicate" || a === "paste" || a === "delete") { if (this.busy) return; this.busy = true; cx.notify(); }
     else this.dismiss();
-    if (a === "open") run("tab.new", { name: ops.baseName(path), mod: "file-viewer", props: { path, on } });
+    if (a === "open") openFile(path, on);
     else if (a === "openApp") exec("open", [path]).catch(() => {});
     else if (a === "reveal") exec("open", entry.root ? [path] : ["-R", path]).catch(() => {});
     else if (a === "terminal") run("tab.new", { folder: path, name: ops.baseName(path) });
@@ -408,7 +418,7 @@ export default class Files extends View {
     if (!r.ok) { this.err = r.error; cx.notify(); return; }
     this.dismiss();
     emit(ask === "newFolder" ? target : dir);
-    if (ask === "newFile") run("tab.new", { name, mod: "file-viewer", props: { path: target, on } });
+    if (ask === "newFile") openFile(target, on);
   }
 
   async confirmDelete(cx) {
